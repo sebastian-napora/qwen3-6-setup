@@ -15,16 +15,58 @@ Architecture:
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
+import threading
+import traceback
 import urllib.request
 from typing import Any, Optional, Union
 
 import litellm
 from litellm.integrations.custom_logger import CustomLogger
 
+# Log forwarding — send LiteLLM callback logs to the vLLM backend's /log endpoint
+_COMPRESS_LOG_ENDPOINT = os.environ.get(
+    "LITE_LLM_LOG_ENDPOINT", "http://localhost:11112/log"
+)
+
+
+def _log(
+    level: int,
+    req_id: str,
+    event: str,
+    **fields: Any,
+) -> None:
+    """Log to terminal (logger) AND to logs/vllm_requests.log."""
+    from datetime import datetime, timezone
+    from pathlib import Path
+
+    payload = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "req_id": req_id,
+        "event": event,
+        **fields,
+    }
+    line = json.dumps(payload, ensure_ascii=False, default=str)
+
+    # Terminal output
+    logger.log(level, line)
+
+    # Append to file directly
+    log_dir = Path(__file__).parent / "logs"
+    log_dir.mkdir(exist_ok=True)
+    log_file = log_dir / "vllm_requests.log"
+    try:
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except Exception:
+        pass
+
+
 logger = logging.getLogger("qwen36_compress")
+logger.setLevel(logging.DEBUG)
 
 COMPRESS_THRESHOLD_TOKENS: int = int(
     os.environ.get("LITE_LLM_COMPRESS_THRESHOLD_TOKENS", "50000")
@@ -42,6 +84,13 @@ COMPRESSED_MODELS: set[str] = set(
 )
 PRESERVE_RECENT_MESSAGES: int = int(
     os.environ.get("LITE_LLM_COMPRESS_PRESERVE_RECENT", "5")
+)
+
+# ── Token budget & proactive compression ────────────────────────────────────
+MAX_CONTEXT_TOKENS: int = int(os.environ.get("LITE_LLM_MAX_CONTEXT_TOKENS", "262144"))
+PROACTIVE_MARGIN: int = int(os.environ.get("LITE_LLM_PROACTIVE_MARGIN", "10000"))
+LARGE_CHUNK_TOKEN_THRESHOLD: int = int(
+    os.environ.get("LITE_LLM_LARGE_CHUNK_THRESHOLD", "3000")
 )
 
 _CACHED_TOKENIZER: Any = None
@@ -137,7 +186,42 @@ async def _async_compress(messages: list[dict], target_tokens: int) -> dict | No
         return None
 
 
-def _build_system_prompt(summary: dict, preserved: list[dict]) -> str:
+def _detect_large_chunks(messages: list[dict]) -> list[dict]:
+    """Return messages that contain content blocks larger than LARGE_CHUNK_TOKEN_THRESHOLD."""
+    large = []
+    for i, msg in enumerate(messages):
+        content = msg.get("content", "")
+        if isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict):
+                    text = part.get("text", "") or part.get("inline_data", {}).get("data", "")
+                    tokens = len(_token_encode(text))
+                    if tokens > LARGE_CHUNK_TOKEN_THRESHOLD:
+                        large.append({
+                            "msg_index": i,
+                            "role": msg.get("role"),
+                            "tokens": tokens,
+                            "preview": text[:200],
+                        })
+                        break
+        elif isinstance(content, str):
+            tokens = len(_token_encode(content))
+            if tokens > LARGE_CHUNK_TOKEN_THRESHOLD:
+                large.append({
+                    "msg_index": i,
+                    "role": msg.get("role"),
+                    "tokens": tokens,
+                    "preview": content[:200],
+                })
+    return large
+
+
+def _build_system_prompt(
+    summary: dict,
+    preserved: list[dict],
+    token_budget: dict | None = None,
+    large_chunks: list[dict] | None = None,
+) -> str:
     """Build a system message from the compression result."""
     summary_text = summary.get("summary", "")
     preserved_msgs = preserved[-PRESERVE_RECENT_MESSAGES:] if preserved else []
@@ -154,8 +238,119 @@ def _build_system_prompt(summary: dict, preserved: list[dict]) -> str:
         lines.append(f"\n--- {role.upper()} ---")
         lines.append(content)
 
+    if token_budget:
+        pct = token_budget.get("pct_used", 0)
+        remaining = token_budget.get("remaining", 0)
+        lines.append(
+            f"\n[TOKEN BUDGET: {pct:.0%} used — ~{remaining:,} tokens remaining in context window]"
+        )
+
+    if large_chunks:
+        total_chunk_tokens = sum(c.get("tokens", 0) for c in large_chunks)
+        lines.append(
+            f"\n[LARGE DATA CHUNKS DETECTED: {len(large_chunks)} block(s), "
+            f"~{total_chunk_tokens:,} tokens total]"
+        )
+        for chunk in large_chunks[:3]:
+            role = chunk.get("role", "?")
+            tokens = chunk.get("tokens", 0)
+            preview = chunk.get("preview", "")
+            lines.append(
+                f"  - [{role}] ~{tokens:,} tokens: \"{preview[:120]}...\""
+            )
+        if len(large_chunks) > 3:
+            lines.append(f"  ... and {len(large_chunks) - 3} more")
+
     lines.append("\n[CONTEXT COMPRESSED — END]")
     return "\n".join(lines)
+
+
+_SESSION_HISTORY: dict[str, list[dict]] = {}
+_SESSION_LOCK = threading.Lock()
+_COUNTER_LOCK = threading.Lock()
+_CALL_COUNTER = 0
+
+
+def _next_call_id() -> str:
+    global _CALL_COUNTER
+    with _COUNTER_LOCK:
+        _CALL_COUNTER += 1
+        return f"llm-{_CALL_COUNTER:06d}"
+
+SUMMARY_SYSTEM_PROMPT = (
+    "You are a session summarizer. Given a conversation, produce a concise "
+    "(under 200 tokens) but informative summary capturing:\n"
+    "1. Key facts, decisions, or outcomes reached\n"
+    "2. Open questions or pending tasks\n"
+    "3. Any important context the user shared\n"
+    "Return ONLY the summary text, no preamble or markup."
+)
+
+SUMMARY_MODEL = "qwen3.6-35b-nvfp4"
+
+
+def _summarize_sync(messages: list[dict], api_base: str) -> str | None:
+    """Run a blocking /completions call to summarize messages."""
+    payload = json.dumps({
+        "prompt": SUMMARY_SYSTEM_PROMPT
+                  + "\n\n---\n"
+                  + "\n\n".join(
+                      f"{m.get('role','')}: {m.get('content','')}"
+                      for m in messages[-20:]
+                  ),
+        "max_tokens": 256,
+        "temperature": 0.2,
+        "skip_special_tokens": True,
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        api_base,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+            return result.get("choices", [{}])[0].get("text", "").strip()
+    except Exception as exc:
+        logger.warning("Summarization call failed: %s", exc)
+        return None
+
+
+async def _async_summarize(messages: list[dict], api_base: str) -> str | None:
+    """Async summarize via aiohttp."""
+    try:
+        import aiohttp
+        payload = json.dumps({
+            "prompt": SUMMARY_SYSTEM_PROMPT
+                      + "\n\n---\n"
+                      + "\n\n".join(
+                          f"{m.get('role','')}: {m.get('content','')}"
+                          for m in messages[-20:]
+                      ),
+            "max_tokens": 256,
+            "temperature": 0.2,
+            "skip_special_tokens": True,
+        })
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=60)
+        ) as session:
+            async with session.post(
+                api_base,
+                data=payload,
+                headers={"Content-Type": "application/json"},
+            ) as resp:
+                result = await resp.json()
+                return result.get("choices", [{}])[0].get("text", "").strip()
+    except ImportError:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None, _summarize_sync, messages, api_base,
+        )
+    except Exception as exc:
+        logger.warning("Async summarization failed: %s", exc)
+        return None
 
 
 class Qwen36CompressCallback(CustomLogger):
@@ -188,7 +383,19 @@ class Qwen36CompressCallback(CustomLogger):
             self.threshold_tokens, self.target_tokens, self.models,
         )
 
-    def _should_compress(self, model: str | None, messages: list[dict]) -> bool:
+    def _session_id(self, data: dict) -> str:
+        """Derive a stable session key from the request data."""
+        user = data.get("user", "default")
+        model = data.get("model", "unknown")
+        raw = f"{user}::{model}"
+        return hashlib.sha1(raw.encode()).hexdigest()[:16]
+
+    def _should_compress(
+        self,
+        model: str | None,
+        messages: list[dict],
+        total_tokens: int | None = None,
+    ) -> bool:
         if not model or not messages:
             return False
         model_lower = model.lower()
@@ -199,7 +406,14 @@ class Qwen36CompressCallback(CustomLogger):
             return False
         if len(messages) < 10:
             return False
-        return count_messages_tokens(messages) > self.threshold_tokens
+        total = total_tokens if total_tokens is not None else count_messages_tokens(messages)
+        # Primary: over threshold
+        if total > self.threshold_tokens:
+            return True
+        # Proactive: within PROACTIVE_MARGIN of threshold (early compression)
+        if total > self.threshold_tokens - PROACTIVE_MARGIN:
+            return True
+        return False
 
     async def async_pre_call_hook(
         self,
@@ -219,52 +433,285 @@ class Qwen36CompressCallback(CustomLogger):
         if call_type not in ("acompletion", "completion"):
             return None
 
-        messages = data.get("messages", [])
-        if isinstance(messages, str):
+        call_id = _next_call_id()
+        try:
+            messages = data.get("messages", [])
+            if isinstance(messages, str):
+                _log(logging.DEBUG, call_id, "llm_pre_call_skipped", reason="string_messages")
+                return None
+
+            model = data.get("model")
+            total = count_messages_tokens(messages)
+
+            # Log the incoming request with INPUT
+            input_preview = ""
+            try:
+                msgs = data.get("messages", [])
+                if isinstance(msgs, list):
+                    total_len = sum(
+                        len(str(m.get("content", ""))) for m in msgs
+                    )
+                    input_preview = (
+                        f"[{len(msgs)} msgs, ~{total_len} chars]"
+                        + f" | first: {str(msgs[0].get('content',''))[:100]}"
+                        + f" | last: {str(msgs[-1].get('content',''))[:100]}"
+                    )
+            except Exception:
+                input_preview = "unavailable"
+
+            _log(logging.DEBUG, call_id, "llm_pre_call",
+                 model=model, msg_count=len(messages), estimated_tokens=total,
+                 call_type=call_type, input_preview=input_preview)
+
+            # Store call_id so async_post_call_success_hook can correlate logs
+            data["_call_id"] = call_id
+
+            # Inject prior session summary if we have one, persist back into data
+            messages = self.rewrite_messages(messages, data)
+            data["messages"] = messages
+            total = count_messages_tokens(messages)
+
+            if not self._should_compress(model, messages, total_tokens=total):
+                _log(logging.DEBUG, call_id, "llm_pre_call_skip_compress",
+                             model=model, msg_count=len(messages),
+                             estimated_tokens=total, reason="under_threshold")
+                budget = {
+                    "pct_used": min(total / MAX_CONTEXT_TOKENS, 1.0),
+                    "remaining": max(MAX_CONTEXT_TOKENS - total, 0),
+                    "total": MAX_CONTEXT_TOKENS,
+                }
+                large_chunks = _detect_large_chunks(messages)
+                messages = self._inject_token_budget_notice(messages, budget, large_chunks)
+                data["messages"] = messages
+                return None
+
+            is_proactive = total <= self.threshold_tokens
+            _log(logging.INFO, call_id, "llm_compress_trigger",
+                         model=model, msg_count=len(messages),
+                         estimated_tokens=total, threshold=self.threshold_tokens,
+                         proactive=is_proactive)
+
+            logger.info(
+                "Compressing %d messages (~%d tokens, threshold=%d, proactive_margin=%d) "
+                "for model=%s — %s",
+                len(messages), total, self.threshold_tokens, PROACTIVE_MARGIN,
+                model, "proactive" if is_proactive else "over_threshold",
+            )
+
+            large_chunks = _detect_large_chunks(messages)
+            compressed = await _async_compress(messages, self.target_tokens)
+
+            if compressed is None:
+                _log(logging.ERROR, call_id, "llm_compress_failed",
+                             msg_count=len(messages), estimated_tokens=total)
+                logger.warning("Compression failed — forwarding original messages")
+                budget = {
+                    "pct_used": min(total / MAX_CONTEXT_TOKENS, 1.0),
+                    "remaining": max(MAX_CONTEXT_TOKENS - total, 0),
+                    "total": MAX_CONTEXT_TOKENS,
+                }
+                messages = self._inject_token_budget_notice(messages, budget, large_chunks)
+                data["messages"] = messages
+                return None
+
+            summary = compressed.get("summary", "")
+            preserved = compressed.get("preserved_messages", [])
+            budget_val = compressed.get("token_budget_used")
+
+            logger.info(
+                "Compression done: summary=%d chars, preserved=%d msgs, budget=%.2f",
+                len(summary), len(preserved), budget_val if budget_val else -1,
+            )
+            _log(logging.INFO, call_id, "llm_compress_done",
+                         summary_chars=len(summary), preserved_msgs=len(preserved),
+                         token_budget=budget_val)
+
+            budget = {
+                "pct_used": min(budget_val or 0.0, 1.0),
+                "remaining": max(int((1 - (budget_val or 0)) * MAX_CONTEXT_TOKENS), 0),
+                "total": MAX_CONTEXT_TOKENS,
+            }
+
+            system_content = _build_system_prompt(
+                {"summary": summary}, preserved,
+                token_budget=budget,
+                large_chunks=large_chunks,
+            )
+
+            compressed_messages = [{"role": "system", "content": system_content}]
+            compressed_messages.extend(messages[-self.preserve_recent:])
+
+            new_total = count_messages_tokens(compressed_messages)
+            logger.info(
+                "Compressed: %d msgs (~%d tokens) → %d msgs (~%d tokens)",
+                len(messages), total, len(compressed_messages), new_total,
+            )
+            _log(logging.INFO, call_id, "llm_compress_result",
+                         orig_msgs=len(messages), orig_tokens=total,
+                         new_msgs=len(compressed_messages), new_tokens=new_total)
+
+            data = dict(data)
+            data["messages"] = compressed_messages
+            return data
+
+        except Exception as exc:
+            tb = traceback.format_exc()
+            logger.error("async_pre_call_hook FAILED: %s\n%s", exc, tb)
+            _log(logging.ERROR, call_id, "llm_pre_call_error",
+                         error=str(exc), error_type=type(exc).__name__, traceback=tb)
+            return None  # Don't block the request on compression errors
+
+    def _inject_token_budget_notice(
+        self,
+        messages: list[dict],
+        budget: dict,
+        large_chunks: list[dict],
+    ) -> list[dict]:
+        """
+        Inject a budget/large-chunk notice into the first system message,
+        or prepend a system message if none exists. Does not modify original.
+        """
+        total = budget.get("total", MAX_CONTEXT_TOKENS)
+        pct = budget.get("pct_used", 0)
+        remaining = budget.get("remaining", 0)
+
+        lines = [
+            "## TOKEN BUDGET",
+            f"- Context window: {total:,} tokens",
+            f"- Current usage: {pct:.0%} (~{total - remaining:,} tokens used)",
+            f"- Remaining: ~{remaining:,} tokens",
+        ]
+
+        if pct >= 0.80:
+            lines.append(
+                "\n## ⚠️ WARNING: Context is >80% full. "
+                "Prefer summarization over verbose responses. "
+                "Compress or omit redundant information."
+            )
+
+        if pct >= 0.95:
+            lines.append(
+                "\n## 🚨 CRITICAL: Context is >95% full. "
+                "Summarize aggressively. Drop boilerplate, logs, and repeated text. "
+                "Keep only decisions, key facts, and current task."
+            )
+
+        if large_chunks:
+            total_chunk = sum(c.get("tokens", 0) for c in large_chunks)
+            lines.append(
+                f"\n## 📦 LARGE DATA DETECTED: {len(large_chunks)} block(s) "
+                f"({total_chunk:,} tokens). When responding, do not reproduce "
+                "all of the data — summarize, extract key points, or point to "
+                "the relevant portion. Prefer compression/summarization."
+            )
+
+        notice = "\n".join(lines)
+        messages = list(messages)  # shallow copy
+
+        # Inject into existing system message
+        system_idx = None
+        for i, msg in enumerate(messages):
+            if msg.get("role") == "system":
+                system_idx = i
+                break
+
+        if system_idx is not None:
+            original = messages[system_idx].get("content", "")
+            messages[system_idx] = {
+                **messages[system_idx],
+                "content": original + "\n\n" + notice,
+            }
+        else:
+            messages.insert(0, {"role": "system", "content": notice})
+
+        return messages
+
+    async def async_post_call_success_hook(
+        self,
+        data: dict,
+        user_api_key_dict: Any,
+        response: Any,
+    ) -> Any:
+        """After each LLM response, asynchronously summarize the session."""
+        call_type = data.get("call_type", "")
+        if call_type not in ("acompletion", "completion"):
             return None
 
-        model = data.get("model")
-        if not self._should_compress(model, messages):
-            return None
+        call_id = data.get("_call_id") or _next_call_id()
+        try:
+            messages = data.get("messages", [])
+            if len(messages) < 2:
+                return None
 
-        total = count_messages_tokens(messages)
-        logger.info(
-            "Compressing %d messages (~%d tokens, threshold=%d) for model=%s",
-            len(messages), total, self.threshold_tokens, model,
-        )
+            sid = self._session_id(data)
+            response_text = ""
+            try:
+                choices = getattr(response, "choices", []) or []
+                if choices:
+                    message = getattr(choices[0], "message", None) or getattr(choices[0], "content", "")
+                    if hasattr(message, "content"):
+                        response_text = (message.content or "")
+                    elif isinstance(message, str):
+                        response_text = message
+            except Exception as exc:
+                logger.warning("Failed to extract response text: %s", exc)
 
-        compressed = await _async_compress(messages, self.target_tokens)
+            response_tokens = len(response_text) // 4
+            _log(logging.DEBUG, call_id, "llm_post_call",
+                         sid=sid, response_chars=len(response_text),
+                         response_tokens=response_tokens,
+                         response_preview=response_text[:300] if response_text else "")
 
-        if compressed is None:
-            logger.warning("Compression failed — forwarding original messages")
-            return None
+            with _SESSION_LOCK:
+                if sid not in _SESSION_HISTORY:
+                    _SESSION_HISTORY[sid] = []
+                hist = _SESSION_HISTORY[sid]
+                if messages and messages[-1].get("role") == "user":
+                    hist.append(dict(messages[-1]))
+                if response_text:
+                    hist.append({"role": "assistant", "content": response_text})
+                if len(hist) > 40:
+                    hist[:] = hist[-40:]
 
-        summary = compressed.get("summary", "")
-        preserved = compressed.get("preserved_messages", [])
-        budget = compressed.get("token_budget_used")
+            if len(hist) >= 8:
+                api_base = os.environ.get(
+                    "LITE_LLM_SUMMARIZE_API_BASE",
+                    "http://localhost:11112/v1/completions",
+                )
+                summary = await _async_summarize(hist, api_base)
+                if summary:
+                    with _SESSION_LOCK:
+                        if len(hist) > 14:
+                            summary_msg = {
+                                "role": "system",
+                                "content": f"[Session summary: {summary}]",
+                            }
+                            hist[:] = [summary_msg] + hist[-12:]
+                    logger.info("Session summarized (%d msgs → short), sid=%s", len(hist), sid)
 
-        logger.info(
-            "Compression done: summary=%d chars, preserved=%d msgs, budget=%.2f",
-            len(summary), len(preserved), budget if budget else -1,
-        )
+        except Exception as exc:
+            tb = traceback.format_exc()
+            logger.error("async_post_call_success_hook FAILED: %s\n%s", exc, tb)
+            _log(logging.ERROR, call_id, "llm_post_call_error",
+                         error=str(exc), error_type=type(exc).__name__, traceback=tb)
 
-        system_content = _build_system_prompt(
-            {"summary": summary}, preserved
-        )
-
-        compressed_messages = [{"role": "system", "content": system_content}]
-        compressed_messages.extend(messages[-self.preserve_recent:])
-
-        new_total = count_messages_tokens(compressed_messages)
-        logger.info(
-            "Compressed: %d msgs (~%d tokens) → %d msgs (~%d tokens)",
-            len(messages), total, len(compressed_messages), new_total,
-        )
-
-        # Return modified data dict — LiteLLM will use this instead
-        data = dict(data)
-        data["messages"] = compressed_messages
-        return data
+    def rewrite_messages(self, messages: list[dict], data: dict) -> list[dict]:
+        """
+        Pre-call: if we have a stored summary for this session, inject it
+        as the first user message so the model gets the gist without re-reading.
+        """
+        sid = self._session_id(data)
+        with _SESSION_LOCK:
+            if sid in _SESSION_HISTORY and len(_SESSION_HISTORY[sid]) >= 8:
+                hist = _SESSION_HISTORY[sid]
+                summary_msgs = [m for m in hist if m.get("role") == "system"]
+                if summary_msgs:
+                    prefix = summary_msgs[0].get("content", "")
+                    messages = [
+                        {"role": "user", "content": f"[Prior context: {prefix}]\n\n"}
+                        + (list(messages) if isinstance(messages, list) else messages)
+                    ]
+        return messages
 
 
 # ── Singleton for LiteLLM callback registration ────────────────────────────────
