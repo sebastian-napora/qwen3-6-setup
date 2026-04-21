@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qwen-server"
+version = "0.1.0"
+description = "Local vLLM API server for Qwen3.6-35B-A3B-NVFP4 with compression endpoints"
+readme = "readm.md"
+requires-python = ">=3.12"
+dependencies = [
+    "litellm",
+    "aiohttp",
+]
+
+[project.optional-dependencies]
+dev = [
+    "build>=1.0",
+    "pyinstaller>=6.0",
+]
+
+[project.scripts]
+qwen-server = "qwen3_6_server:run"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["qwen3_6_server*", "qwen3-6-server*", "server_compress*", "qwen36_compress*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100

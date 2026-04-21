@@ -207,8 +207,8 @@ async def main():
         # ── Serve ───────────────────────────────────────────────────────────────
         listen_address, sock = setup_server(args)
         print(f"\n🚀 Blackwell NVFP4 Server @ 256K Context")
-        print(f"📡 API:        http://0.0.0.0:{args.port}/v1")
-        print(f"📦 Compress:   http://0.0.0.0:{args.port}/compress")
+        print(f"📡 API:        http://0.0.0.0:1111/v1")
+        print(f"📦 Compress:   http://0.0.0.0:1111/compress")
         print(f"🔧 Parsers:    qwen3_xml + qwen3 reasoning")
         print()
         await serve_http(

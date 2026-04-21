@@ -1,0 +1,7 @@
+venv
+git.backup
+.qwen
+dist
+qwen_server.egg-info
+.xtread
+__pycache__
