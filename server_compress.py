@@ -88,6 +88,10 @@ litellm.callbacks.append(_proxy_io)
 # import qwen36_compress  # noqa: F401 — must import before register()
 # qwen36_compress.register()
 
+# Todo/Approval/Summary prompt injection — always enabled for lunch-model
+import qwen36_compress
+qwen36_compress.register_todo_callback()
+
 logging.basicConfig(
     level=logging.WARNING,
     format="%(asctime)s %(name)-25s %(levelname)-8s %(message)s",

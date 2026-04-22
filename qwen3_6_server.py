@@ -120,7 +120,7 @@ async def main():
         "RedHatAI/Qwen3.6-35B-A3B-NVFP4",
         "--trust-remote-code",
         "--dtype", "bfloat16",
-        "--max-model-len", "220000",
+        "--max-model-len", "226000",
         "--gpu-memory-utilization", "0.35",
         "--max-num-batched-tokens", "4096",
         "--moe-backend", "cutlass",
@@ -132,6 +132,11 @@ async def main():
         "--enable-auto-tool-choice",
         "--port", "11112",
         "--host", "0.0.0.0",
+        # ── Sampling defaults (seed is engine-level; rest via --override-generation-config) ─
+        "--seed", "5678",
+        "--reasoning-config", '{"reasoning_start_str": "<think>", "reasoning_end_str": "</think>"}',
+        "--override-generation-config",
+        '{"temperature":1.0,"top_p":0.95,"top_k":20,"min_p":0.0,"max_tokens":64000,"repetition_penalty":1.0,"presence_penalty":1.5,"frequency_penalty":1.0,"thinking_token_budget":0}',
     ]
 
     args = serve_parser.parse_args(argv)

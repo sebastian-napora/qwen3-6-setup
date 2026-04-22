@@ -69,7 +69,7 @@ logger = logging.getLogger("qwen36_compress")
 logger.setLevel(logging.DEBUG)
 
 COMPRESS_THRESHOLD_TOKENS: int = int(
-    os.environ.get("LITE_LLM_COMPRESS_THRESHOLD_TOKENS", "50000")
+    os.environ.get("LITE_LLM_COMPRESS_THRESHOLD_TOKENS", "150000")
 )
 COMPRESS_TARGET_TOKENS: int = int(
     os.environ.get("LITE_LLM_COMPRESS_TARGET_TOKENS", "16384")
@@ -87,7 +87,7 @@ PRESERVE_RECENT_MESSAGES: int = int(
 )
 
 # ── Token budget & proactive compression ────────────────────────────────────
-MAX_CONTEXT_TOKENS: int = int(os.environ.get("LITE_LLM_MAX_CONTEXT_TOKENS", "262144"))
+MAX_CONTEXT_TOKENS: int = int(os.environ.get("LITE_LLM_MAX_CONTEXT_TOKENS", "226000"))
 PROACTIVE_MARGIN: int = int(os.environ.get("LITE_LLM_PROACTIVE_MARGIN", "10000"))
 LARGE_CHUNK_TOKEN_THRESHOLD: int = int(
     os.environ.get("LITE_LLM_LARGE_CHUNK_THRESHOLD", "3000")
@@ -734,4 +734,302 @@ def register():
         "Qwen36CompressCallback registered to litellm.callbacks "
         "(threshold=%d tokens, models=%s)",
         cb.threshold_tokens, cb.models,
+    )
+
+
+# ── Todo/Approval/Summary Prompt Injection ────────────────────────────────────
+
+TODO_APPROVAL_SYSTEM_PROMPT = """[SYSTEM INSTRUCTION]
+You are lunch-model assistant. When the user asks you to plan, figure out a plan, or explain how you would approach a task — detect this intent naturally without relying on specific keywords.
+
+**RESPONSE FORMAT (mandatory):**
+1. ANALYSIS: Write 2-3 sentences max. Be specific to this exact request — NOT a generic framework.
+2. TODO LIST: Numbered steps specific to this task.
+3. END: "Awaiting your approval to proceed..." then stop. Do NOT execute yet.
+4. AFTER APPROVAL: Execute, then "Done: X / Not done: Y" then <|done|> then stop.
+
+**ANTI-REPETITION (strict):**
+- NEVER start with "Sure", "I'll", "Let me", "Here's", or similar generic openings.
+- NEVER use the same sentence structure across different tasks.
+- NEVER rephrase a point you already made.
+- Each response must be different from the previous one.
+- Be concise — stop the moment you have finished answering.
+- <|done|> = stop immediately, nothing after.
+"""
+
+
+# ── Rules injected into the FIRST user message of a new conversation ───────────
+FIRST_MSG_RULES = """
+[IMPORTANT — RESPONSE RULES]
+You are lunch-model assistant. For every task request you MUST:
+
+**RESPONSE FORMAT (mandatory):**
+1. ANALYSIS: Write 2-3 sentences max. Be specific to this exact request — NOT a generic framework.
+2. TODO LIST: Numbered steps specific to this task.
+3. END: "Awaiting your approval to proceed..." then stop. Do NOT execute yet.
+4. AFTER APPROVAL: Execute, then "Done: X / Not done: Y" then <|done|> then stop.
+
+**ANTI-REPETITION (strict):**
+- NEVER start with "Sure", "I'll", "Let me", "Here's", or similar generic openings.
+- NEVER use the same sentence structure across different tasks.
+- NEVER rephrase a point you already made.
+- Each response must be different from the previous one.
+- Be concise — stop the moment you have finished answering.
+- <|done|> = stop immediately, nothing after.
+"""
+
+
+class TodoApprovalPromptCallback(CustomLogger):
+    """
+    Injects todo/approval/summary instructions into every request for lunch-model.
+
+    - On first user message of a conversation: injects full plan rules as user prefix
+    - On subsequent messages: injects lightweight system prompt
+    - Configurable via env vars to enable/disable
+    """
+
+    def __init__(
+        self,
+        enabled: bool | None = None,
+        models: set[str] | None = None,
+    ):
+        super().__init__()
+        self.enabled = (
+            enabled
+            if enabled is not None
+            else os.environ.get("LITE_LLM_TODO_APPROVAL", "true").lower()
+            not in ("false", "0", "no", "off")
+        )
+        self.models = models or set(
+            m.strip()
+            for m in os.environ.get(
+                "LITE_LLM_TODO_APPROVAL_MODELS",
+                "qwen3.6-35b-nvfp4",
+            ).split(",")
+            if m.strip()
+        )
+        self._seen_sessions: set[str] = set()
+        self._seen_lock = threading.Lock()
+        logger.info(
+            "TodoApprovalPromptCallback init: enabled=%s, models=%s",
+            self.enabled, self.models,
+        )
+
+    def _session_id(self, data: dict) -> str:
+        import hashlib
+        user = data.get("user", "default")
+        model = data.get("model", "unknown")
+        raw = f"{user}::{model}"
+        return hashlib.sha1(raw.encode()).hexdigest()[:16]
+
+    def _is_first_user_message(self, messages: list[dict]) -> bool:
+        """Check if this is the first user message in this conversation."""
+        user_msgs = [m for m in messages if m.get("role") == "user"]
+        # If there's exactly 1 user message (the current one we're processing),
+        # or user messages appear before any assistant messages, it's first
+        if len(user_msgs) <= 1:
+            return True
+        # Check if there's any assistant message before the last user message
+        for m in messages:
+            if m.get("role") == "assistant":
+                return False
+            if m.get("role") == "user" and m is not messages[-1]:
+                return False
+        return True
+
+    def _should_apply(self, model: str | None) -> bool:
+        if not self.enabled:
+            return False
+        if not model:
+            return False
+        model_lower = model.lower()
+        return any(
+            m.lower() in model_lower or model_lower in m.lower()
+            for m in self.models
+        )
+
+    def _extract_last_user_message(
+        self, messages: list[dict]
+    ) -> tuple[list[dict], str]:
+        """Pop the last user message from the list, return (remaining, content)."""
+        messages = list(messages)
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i].get("role") == "user":
+                content = messages[i].get("content", "")
+                # Normalize list content (e.g. multimodal) to plain text
+                if isinstance(content, list):
+                    content = " ".join(
+                        p.get("text", "") or str(p)
+                        for p in content if isinstance(p, dict)
+                    )
+                elif not isinstance(content, str):
+                    content = str(content)
+                del messages[i]
+                return messages, content
+        return messages, ""
+
+    def _count_tokens(self, messages: list[dict]) -> int:
+        """Estimate token count for a messages list."""
+        global _CACHED_TOKENIZER
+        if _CACHED_TOKENIZER is None:
+            try:
+                from transformers import AutoTokenizer
+                _CACHED_TOKENIZER = AutoTokenizer.from_pretrained(
+                    "RedHatAI/Qwen3.6-35B-A3B-NVFP4",
+                    use_fast=True,
+                    trust_remote_code=True,
+                )
+            except Exception:
+                return 0
+        total = 0
+        for m in messages:
+            content = m.get("content", "")
+            if isinstance(content, list):
+                content = " ".join(p.get("text", "") or str(p) for p in content if isinstance(p, dict))
+            elif not isinstance(content, str):
+                content = str(content)
+            try:
+                total += len(_CACHED_TOKENIZER.encode(content, add_special_tokens=False))
+            except Exception:
+                pass
+        return total
+
+    async def async_pre_call_hook(
+        self,
+        user_api_key_dict: Any,
+        cache: Any,
+        data: dict,
+        call_type: str,
+    ) -> Optional[Union[Exception, str, dict]]:
+        if call_type not in ("acompletion", "completion"):
+            return None
+
+        model = data.get("model")
+        if not self._should_apply(model):
+            return None
+
+        messages = data.get("messages", [])
+        if not messages:
+            return None
+
+        sid = self._session_id(data)
+
+        with self._seen_lock:
+            is_new = sid not in self._seen_sessions
+            if is_new:
+                self._seen_sessions.add(sid)
+
+        # Token count BEFORE injection
+        tokens_before = self._count_tokens(messages)
+
+        # Extract last user message for wrapping
+        messages_copy = list(messages)
+        last_user_idx = None
+        for i in range(len(messages_copy) - 1, -1, -1):
+            if messages_copy[i].get("role") == "user":
+                last_user_idx = i
+                break
+
+        if last_user_idx is None:
+            return None
+
+        content = messages_copy[last_user_idx].get("content", "")
+        # Normalize list content (e.g. multimodal) to plain text
+        if isinstance(content, list):
+            content = " ".join(
+                p.get("text", "") or str(p)
+                for p in content if isinstance(p, dict)
+            )
+        elif not isinstance(content, str):
+            content = str(content)
+
+        # Build new messages
+        new_messages = []
+
+        # System prompt (always lightweight — intent-based plan trigger)
+        new_messages.append({"role": "system", "content": TODO_APPROVAL_SYSTEM_PROMPT})
+
+        # Existing messages except last user
+        for i, m in enumerate(messages_copy):
+            if i == last_user_idx:
+                continue
+            new_messages.append(m)
+
+        # Last user message: wrap with rules on first turn, plain on rest
+        if is_new:
+            new_messages.append({"role": "user", "content": FIRST_MSG_RULES + content})
+        else:
+            new_messages.append({"role": "user", "content": content})
+
+        # Token count AFTER injection
+        tokens_after = self._count_tokens(new_messages)
+
+        # Log token usage
+        _log(
+            logging.INFO, sid or "unknown", "todo_tokens",
+            tokens_before=tokens_before,
+            tokens_after=tokens_after,
+            injection_overhead=tokens_after - tokens_before,
+            is_new_session=is_new,
+            model=model,
+            msg_count=len(messages),
+        )
+        logger.info(
+            "TOKEN USAGE  model=%s  msgs=%d  tokens=%d/%d  overhead=%d (%s)",
+            model, len(messages), tokens_before, tokens_after,
+            tokens_after - tokens_before, "new" if is_new else "continue",
+        )
+
+        # Inject token info so LLM outputs it visibly in its response
+        token_info = (
+            f"\n\n[CONTEXT INFO — include in your response footer]\n"
+            f"Tokens used: ~{tokens_before:,} / {tokens_after:,} | "
+            f"Context window: 262,144 | "
+            f"Remaining: ~{max(262144 - tokens_after, 0):,}"
+        )
+        system_with_tokens = TODO_APPROVAL_SYSTEM_PROMPT + token_info
+
+        # Rebuild with token info in system prompt, keep all other messages
+        final_messages = []
+        final_messages.append({"role": "system", "content": system_with_tokens})
+        # Re-add existing messages except the original last user (we'll re-add it)
+        for i, m in enumerate(messages_copy):
+            if i == last_user_idx:
+                continue
+            final_messages.append(m)
+        # Re-add user message with or without rules wrapper
+        if is_new:
+            final_messages.append({"role": "user", "content": FIRST_MSG_RULES + content})
+        else:
+            final_messages.append({"role": "user", "content": content})
+
+        data = dict(data)
+        data["messages"] = final_messages
+        logger.debug(
+            "TodoApprovalPrompt injected (new=%s) for model=%s (%d → %d msgs)",
+            is_new, model, len(messages), len(final_messages),
+        )
+        return data
+
+
+# ── Singleton for TodoApprovalPromptCallback ───────────────────────────────────
+
+_todo_callback_instance: TodoApprovalPromptCallback | None = None
+
+
+def get_todo_callback() -> TodoApprovalPromptCallback:
+    global _todo_callback_instance
+    if _todo_callback_instance is None:
+        _todo_callback_instance = TodoApprovalPromptCallback()
+    return _todo_callback_instance
+
+
+def register_todo_callback():
+    """Register the todo/approval prompt callback with LiteLLM."""
+    cb = get_todo_callback()
+    litellm.callbacks.append(cb)
+    litellm.success_callback.append(cb)
+    logger.info(
+        "TodoApprovalPromptCallback registered (enabled=%s, models=%s)",
+        cb.enabled, cb.models,
     )
