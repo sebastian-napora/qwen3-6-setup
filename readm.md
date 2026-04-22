@@ -2,7 +2,40 @@
 
 This is the **vLLM backend** for `RedHatAI/Qwen3.6-35B-A3B-NVFP4`. It serves the model on port `11112` with an LLM-powered `/compress` endpoint.
 
-**This server is not called directly by clients.** It is started by LiteLLM's `comstart` command and hosts the `/compress` endpoint used by the auto-compression middleware.
+**This server is not called directly by clients.** It is started manually (see Quick Start) and sits behind the LiteLLM proxy which VS Code Copilot talks to.
+
+---
+
+## Fixes Applied (April 2026)
+
+Five bugs that caused degraded output, `</think>` leaks, and random crashes were diagnosed and fixed:
+
+### 1. Token degradation (random words / symbols / emojis)
+**Cause:** Sampling params `temperature=1.0, presence_penalty=1.5, frequency_penalty=1.0` caused the model to devolve into a 1500-token word-stream that never produced a real answer.  
+**Fix:** Changed to Qwen3-recommended values in both `qwen3_6_server.py` (`--override-generation-config`) and `lite_llm_config.yaml`:
+```
+temperature: 0.7 | top_p: 0.8 | top_k: 20 | min_p: 0.0
+repetition_penalty: 1.05 | presence_penalty: 0 | frequency_penalty: 0
+```
+
+### 2. `</think>` tags leaking into chat output
+**Cause:** `_THINK_PAT` regex in `qwen36_compress.py` used Qwen2 syntax `<|think|>` instead of Qwen3 syntax `<think>`. The stripper replaced the literal twice and did nothing useful.  
+**Fix:** Rewrote `strip_thinking_blocks()` to correctly match `<think>...</think>` (DOTALL) and strip any orphan tags.
+
+### 3. Reasoning appearing outside reasoning pane / over-thinking
+**Cause:** `TodoApprovalPromptCallback.async_pre_call_hook` was duplicating system messages (one from config, one injected) and prepending a 454-token `FIRST_MSG_RULES` block to every "first" message — forcing the model into deep reasoning on trivial prompts.  
+**Fix:** Rewrote the hook to augment the existing system message in place (no duplication). Gated `FIRST_MSG_RULES` injection behind env var `LITE_LLM_INJECT_FIRST_MSG_RULES` (default `false`).
+
+### 4. Unknown stop token `<|done|>`
+**Cause:** `<|done|>` in the stop list and system prompt — the model was never trained on this token and would spin endlessly waiting to emit it.  
+**Fix:** Removed from `lite_llm_config.yaml` stops list and all prompt text. Standard stop tokens `<|im_end|>` and `<|endoftext|>` kept.
+
+### 5. Silent crashes / no error info in logs
+**Cause:** `litellm.failure_callback` was never wired; `ProxyIOLogger.log_pre_api_call` emitted a WARNING on every *successful* call drowning real errors; `RequestLoggingMiddleware` was defined but never installed.  
+**Fix:** Registered `_proxy_io` on both `litellm.success_callback` and `litellm.failure_callback` in `server_compress.py`. Downgraded per-call kwargs log from WARNING → DEBUG.  
+**Note:** `RequestLoggingMiddleware` (BaseHTTPMiddleware) was incompatible with vLLM's `listen_for_disconnect()` task — it corrupted non-streaming responses to `"null"`. It was intentionally removed; proxy-side callbacks cover logging instead.
+
+---
 
 ## Architecture
 

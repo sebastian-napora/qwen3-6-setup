@@ -205,25 +205,10 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             duration = time.monotonic() - start
             status = response.status_code
 
-            # Capture response body for non-streaming chat completions
+            # Note: response body capture disabled; iterating the body_iterator
+            # of vLLM's non-streaming responses corrupts the payload (returns "null").
+            # For response inspection use the LiteLLM proxy logs instead.
             response_text = ""
-            is_streaming = getattr(response, "is_streaming", False)
-            if not is_streaming and path == "/v1/chat/completions":
-                try:
-                    body_bytes = b""
-                    async for chunk in response.body_iterator:
-                        body_bytes += chunk
-                    response_text = body_bytes.decode("utf-8", errors="replace")[:4000]
-                    from starlette.responses import Response as StarletteResponse
-                    response = StarletteResponse(
-                        content=body_bytes,
-                        status_code=status,
-                        headers=dict(response.headers),
-                        media_type=response.media_type,
-                    )
-                except Exception as e:
-                    _log(logging.WARNING, req_id, "response_capture_error",
-                         error=str(e), error_type=type(e).__name__)
 
             _log(
                 logging.INFO if status < 400 else logging.WARNING,

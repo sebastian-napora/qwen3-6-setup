@@ -35,15 +35,27 @@ _io_logger.addHandler(_ch)
 # Custom I/O logger — logs every request + response to console
 class ProxyIOLogger(litellm.integrations.custom_logger.CustomLogger):
     def log_pre_api_call(self, model, messages, kwargs):
+        import uuid
+        req_id = kwargs.get("request_id") or str(uuid.uuid4())[:8]
         temperature = kwargs.get("temperature")
         max_tokens = kwargs.get("max_tokens")
         stream = kwargs.get("stream")
+        msg_count = len(messages)
         msg_preview = self._summarize(messages)
-        _io_logger.info(f"▶ REQUEST  model={model}  temp={temperature}  max_t={max_tokens}  stream={stream}  msgs={len(messages)}")
+        _io_logger.info(f"▶ REQUEST  req={req_id}  model={model}  temp={temperature}  max_t={max_tokens}  stream={stream}  msgs={msg_count}")
         if msg_preview:
             _io_logger.info(f"  {msg_preview}")
+        # Per-call kwargs at debug level — was WARNING which drowned real errors.
+        _io_logger.debug(f"  [PRE_CALL] req_id={req_id}  kwargs={ {k: v for k, v in kwargs.items() if k not in ('messages',)} }")
+
+    def log_pre_call(self, model, messages, kwargs):
+        import uuid
+        req_id = kwargs.get("request_id") or str(uuid.uuid4())[:8]
+        msg_count = len(messages) if messages else 0
+        _io_logger.info(f"▶ PRE_CALL  req={req_id}  model={model}  msgs={msg_count}  kwargs={ {k: v for k, v in kwargs.items() if k not in ('messages',)} }")
 
     def log_success_event(self, kwargs, response_obj, start_time, end_time):
+        req_id = kwargs.get("request_id") or "-"
         try:
             choices = kwargs.get("messages", [])
             content = ""
@@ -59,10 +71,18 @@ class ProxyIOLogger(litellm.integrations.custom_logger.CustomLogger):
                 content = str(response_obj)[:300]
         except Exception:
             content = str(response_obj)[:300]
-        _io_logger.info(f"◀ RESPONSE {content[:400]}")
+        duration_ms = round((end_time - start_time) * 1000) if start_time and end_time else 0
+        _io_logger.info(f"◀ RESPONSE req={req_id}  dur={duration_ms}ms  {content[:400]}")
 
     def log_failure_event(self, kwargs, response_obj, start_time, end_time):
-        _io_logger.error(f"✗ FAILURE  {str(response_obj)[:300]}")
+        import traceback
+        req_id = kwargs.get("request_id") or "-"
+        error_type = type(response_obj).__name__ if response_obj else "unknown"
+        error_msg = str(response_obj)[:1000] if response_obj else "no error object"
+        duration_ms = round((end_time - start_time) * 1000) if start_time and end_time else 0
+        tb = traceback.format_stack()[-4:-1]
+        _io_logger.error(f"✗ FAILURE  req={req_id}  dur={duration_ms}ms  type={error_type}  error={error_msg}")
+        _io_logger.error(f"  [CALL STACK] {' | '.join(tb)}")
 
     def _summarize(self, messages):
         parts = []
@@ -78,6 +98,10 @@ class ProxyIOLogger(litellm.integrations.custom_logger.CustomLogger):
 
 _proxy_io = ProxyIOLogger()
 litellm.callbacks.append(_proxy_io)
+# Wire the same logger into success/failure channels so failures actually
+# reach log_failure_event (otherwise crashes vanish silently).
+litellm.success_callback.append(_proxy_io)
+litellm.failure_callback.append(_proxy_io)
 
 # Must import + register BEFORE the proxy starts processing requests.
 # uvicorn imports the app as a module-level object, so callbacks must be
@@ -88,9 +112,10 @@ litellm.callbacks.append(_proxy_io)
 # import qwen36_compress  # noqa: F401 — must import before register()
 # qwen36_compress.register()
 
-# Todo/Approval/Summary prompt injection — always enabled for lunch-model
-import qwen36_compress
-qwen36_compress.register_todo_callback()
+# Todo/Approval prompt injection disabled — removed, was injecting conflicting
+# system messages and forcing TODO-list behaviour on every Copilot request.
+# import qwen36_compress
+# qwen36_compress.register_todo_callback()
 
 logging.basicConfig(
     level=logging.WARNING,

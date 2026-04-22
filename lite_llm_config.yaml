@@ -16,26 +16,33 @@ model_list:
       model: openai/RedHatAI/Qwen3.6-35B-A3B-NVFP4
       api_base: http://localhost:11112/v1
       api_key: none
-      # ── Sampling ─────────────────────────────────────────────────────────
-      temperature: 1.0
-      top_p: 0.95
+      # ── Sampling (Qwen3 team-recommended; aggressive penalties cause
+      # ── degenerate random-word streams that never close </think>) ─────────
+      temperature: 0.7
+      top_p: 0.8
       top_k: 20
       min_p: 0.0
-      max_tokens: 64000
-      repetition_penalty: 1.0
-      presence_penalty: 1.5
-      frequency_penalty: 1.0
-      stop: ["<|im_end|>", "<|endoftext|>", "\n\n\n", "<|done|>"]
+      max_tokens: 102400
+      repetition_penalty: 1.05
+      presence_penalty: 0.0
+      frequency_penalty: 0.0
+      stop: ["<|im_end|>", "<|endoftext|>"]
       # thinking budget (tokens allocated for <|think|> chain) — must be in extra_body
       extra_body:
         chat_template_kwargs:
-          enable_thinking: false
-        thinking_token_budget: 0
+          enable_thinking: true
+        thinking_token_budget: 16384
 
 litellm_settings:
   drop_params: true
   request_timeout: 300
   set_verbose: false
+  system_prompt: |
+    You are a helpful, concise coding assistant.
+    Match response length to the request: trivial questions get trivial answers.
+    Do not repeat reasoning or restart from scratch.
+    Do not emit Error:/Exception:/Warning: labels unless there is a genuine error.
+    Stop as soon as the task is done.
 
 general_settings:
   completion_model: ""

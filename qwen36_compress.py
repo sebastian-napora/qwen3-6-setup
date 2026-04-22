@@ -19,10 +19,29 @@ import hashlib
 import json
 import logging
 import os
+import re
 import threading
 import traceback
 import urllib.request
 from typing import Any, Optional, Union
+
+
+# ── Thinking-block stripper ────────────────────────────────────────────────────
+# Qwen3 emits reasoning wrapped in <think>...</think>. The vLLM reasoning
+# parser routes those into `reasoning_content`, but if any leak into the
+# visible content (e.g. truncated mid-stream, parser glitch) we strip them
+# here so users don't see raw </think> tags in the chat.
+_THINK_PAT = re.compile(r'<think\b[^>]*>.*?</think>', re.DOTALL | re.IGNORECASE)
+
+
+def strip_thinking_blocks(text: str | None) -> str:
+    """Remove <think>...</think> blocks (and any orphan tags) from text."""
+    if not text:
+        return ""
+    text = _THINK_PAT.sub("", text)
+    # Clean up any orphan opening/closing tags left by truncated streams.
+    text = re.sub(r'</?think\b[^>]*>', '', text, flags=re.IGNORECASE)
+    return text
 
 import litellm
 from litellm.integrations.custom_logger import CustomLogger
@@ -468,6 +487,15 @@ class Qwen36CompressCallback(CustomLogger):
 
             # Inject prior session summary if we have one, persist back into data
             messages = self.rewrite_messages(messages, data)
+            # Strip any stray <think>...</think> from assistant history before
+            # forwarding — prevents the model re-triggering reasoning when it
+            # sees a bare </think> in a prior turn.
+            messages = [
+                {**m, "content": strip_thinking_blocks(m.get("content", ""))}
+                if m.get("role") == "assistant" and isinstance(m.get("content"), str)
+                else m
+                for m in messages
+            ]
             data["messages"] = messages
             total = count_messages_tokens(messages)
 
@@ -645,22 +673,41 @@ class Qwen36CompressCallback(CustomLogger):
 
             sid = self._session_id(data)
             response_text = ""
+            reasoning_text = ""
             try:
                 choices = getattr(response, "choices", []) or []
                 if choices:
-                    message = getattr(choices[0], "message", None) or getattr(choices[0], "content", "")
+                    raw = choices[0]
+                    message = getattr(raw, "message", None) or getattr(raw, "content", "")
+
+                    # ── Extract content ─────────────────────────────────────────
                     if hasattr(message, "content"):
-                        response_text = (message.content or "")
+                        raw_content = message.content or ""
                     elif isinstance(message, str):
-                        response_text = message
+                        raw_content = message
+                    elif isinstance(message, dict):
+                        raw_content = message.get("content") or ""
+                        # LiteLLM puts thinking in reasoning_content, vLLM uses reasoning
+                        reasoning_text = strip_thinking_blocks(
+                            message.get("reasoning_content") or message.get("reasoning") or ""
+                        )
+                    else:
+                        raw_content = ""
+
+                    # Strip any thinking wrappers that leaked into content
+                    response_text = strip_thinking_blocks(raw_content)
+
             except Exception as exc:
                 logger.warning("Failed to extract response text: %s", exc)
 
             response_tokens = len(response_text) // 4
             _log(logging.DEBUG, call_id, "llm_post_call",
-                         sid=sid, response_chars=len(response_text),
+                         sid=sid,
+                         reasoning_chars=len(reasoning_text),
+                         response_chars=len(response_text),
                          response_tokens=response_tokens,
-                         response_preview=response_text[:300] if response_text else "")
+                         response_preview=response_text[:200] if response_text else "",
+                         reasoning_preview=reasoning_text[:200] if reasoning_text else "")
 
             with _SESSION_LOCK:
                 if sid not in _SESSION_HISTORY:
@@ -739,43 +786,30 @@ def register():
 
 # ── Todo/Approval/Summary Prompt Injection ────────────────────────────────────
 
-TODO_APPROVAL_SYSTEM_PROMPT = """[SYSTEM INSTRUCTION]
-You are lunch-model assistant. When the user asks you to plan, figure out a plan, or explain how you would approach a task — detect this intent naturally without relying on specific keywords.
+TODO_APPROVAL_SYSTEM_PROMPT = """You are lunch-model assistant.
 
-**RESPONSE FORMAT (mandatory):**
-1. ANALYSIS: Write 2-3 sentences max. Be specific to this exact request — NOT a generic framework.
-2. TODO LIST: Numbered steps specific to this task.
-3. END: "Awaiting your approval to proceed..." then stop. Do NOT execute yet.
-4. AFTER APPROVAL: Execute, then "Done: X / Not done: Y" then <|done|> then stop.
+When the user asks for a non-trivial PLAN or APPROACH (detect this from intent, not keywords):
+1. ANALYSIS: 2-3 sentences specific to this request.
+2. TODO LIST: numbered steps specific to this task.
+3. End with "Awaiting your approval to proceed..." and stop.
+4. After approval, execute, then summarize "Done: X / Not done: Y" and stop.
 
-**ANTI-REPETITION (strict):**
-- NEVER start with "Sure", "I'll", "Let me", "Here's", or similar generic openings.
-- NEVER use the same sentence structure across different tasks.
-- NEVER rephrase a point you already made.
-- Each response must be different from the previous one.
-- Be concise — stop the moment you have finished answering.
-- <|done|> = stop immediately, nothing after.
+For trivial questions (greetings, single-word answers, simple lookups), reply directly and briefly.
+
+Style: be concise. Do not start with "Sure", "I'll", "Let me", "Here's". Do not repeat yourself. Stop the moment the answer is complete.
 """
 
 
 # ── Rules injected into the FIRST user message of a new conversation ───────────
 FIRST_MSG_RULES = """
 [IMPORTANT — RESPONSE RULES]
-You are lunch-model assistant. For every task request you MUST:
+You are lunch-model assistant. For any non-trivial task request:
+1. ANALYSIS: 2-3 sentences specific to this request.
+2. TODO LIST: numbered steps specific to this task.
+3. End with "Awaiting your approval to proceed..." and stop.
+4. After approval, execute, then "Done: X / Not done: Y" and stop.
 
-**RESPONSE FORMAT (mandatory):**
-1. ANALYSIS: Write 2-3 sentences max. Be specific to this exact request — NOT a generic framework.
-2. TODO LIST: Numbered steps specific to this task.
-3. END: "Awaiting your approval to proceed..." then stop. Do NOT execute yet.
-4. AFTER APPROVAL: Execute, then "Done: X / Not done: Y" then <|done|> then stop.
-
-**ANTI-REPETITION (strict):**
-- NEVER start with "Sure", "I'll", "Let me", "Here's", or similar generic openings.
-- NEVER use the same sentence structure across different tasks.
-- NEVER rephrase a point you already made.
-- Each response must be different from the previous one.
-- Be concise — stop the moment you have finished answering.
-- <|done|> = stop immediately, nothing after.
+For trivial requests (greetings, single-word answers), reply directly. Be concise.
 """
 
 
@@ -800,6 +834,13 @@ class TodoApprovalPromptCallback(CustomLogger):
             else os.environ.get("LITE_LLM_TODO_APPROVAL", "true").lower()
             not in ("false", "0", "no", "off")
         )
+        # FIRST_MSG_RULES adds ~250 tokens to every "first" message and forces
+        # the model to over-think trivial prompts. Off by default; opt in via
+        # LITE_LLM_INJECT_FIRST_MSG_RULES=1.
+        self.inject_first_msg_rules = (
+            os.environ.get("LITE_LLM_INJECT_FIRST_MSG_RULES", "false").lower()
+            in ("true", "1", "yes", "on")
+        )
         self.models = models or set(
             m.strip()
             for m in os.environ.get(
@@ -811,8 +852,8 @@ class TodoApprovalPromptCallback(CustomLogger):
         self._seen_sessions: set[str] = set()
         self._seen_lock = threading.Lock()
         logger.info(
-            "TodoApprovalPromptCallback init: enabled=%s, models=%s",
-            self.enabled, self.models,
+            "TodoApprovalPromptCallback init: enabled=%s, inject_first_msg_rules=%s, models=%s",
+            self.enabled, self.inject_first_msg_rules, self.models,
         )
 
     def _session_id(self, data: dict) -> str:
@@ -922,49 +963,91 @@ class TodoApprovalPromptCallback(CustomLogger):
         # Token count BEFORE injection
         tokens_before = self._count_tokens(messages)
 
-        # Extract last user message for wrapping
+        # Find last user message (for optional FIRST_MSG_RULES wrapping)
         messages_copy = list(messages)
         last_user_idx = None
         for i in range(len(messages_copy) - 1, -1, -1):
             if messages_copy[i].get("role") == "user":
                 last_user_idx = i
                 break
-
         if last_user_idx is None:
             return None
 
-        content = messages_copy[last_user_idx].get("content", "")
-        # Normalize list content (e.g. multimodal) to plain text
-        if isinstance(content, list):
-            content = " ".join(
-                p.get("text", "") or str(p)
-                for p in content if isinstance(p, dict)
-            )
-        elif not isinstance(content, str):
-            content = str(content)
-
-        # Build new messages
-        new_messages = []
-
-        # System prompt (always lightweight — intent-based plan trigger)
-        new_messages.append({"role": "system", "content": TODO_APPROVAL_SYSTEM_PROMPT})
-
-        # Existing messages except last user
+        # Detect existing system message — never inject a duplicate one.
+        existing_system_idx = None
         for i, m in enumerate(messages_copy):
-            if i == last_user_idx:
-                continue
-            new_messages.append(m)
+            if m.get("role") == "system":
+                existing_system_idx = i
+                break
 
-        # Last user message: wrap with rules on first turn, plain on rest
-        if is_new:
-            new_messages.append({"role": "user", "content": FIRST_MSG_RULES + content})
+        # Build token-budget footer (cheap context awareness for the model).
+        token_info = (
+            f"\n\n[CONTEXT INFO]\n"
+            f"Tokens used: ~{tokens_before:,} | "
+            f"Context window: 226,000 | "
+            f"Remaining: ~{max(226000 - tokens_before, 0):,}"
+        )
+
+        def _clean_msg(m: dict) -> dict:
+            """Strip any stray <think>...</think> tags from assistant history.
+            vLLM's streaming reasoning parser occasionally leaves a bare </think>
+            at the start of content; if that's sent back as history the model
+            thinks it's mid-reasoning and duplicates its thinking block."""
+            if m.get("role") != "assistant":
+                return m
+            content = m.get("content", "")
+            if not content or not isinstance(content, str):
+                return m
+            cleaned = strip_thinking_blocks(content)
+            if cleaned == content:
+                return m
+            return {**m, "content": cleaned}
+
+        final_messages: list[dict] = []
+        if existing_system_idx is None:
+            # No system message at all — provide ours.
+            final_messages.append({
+                "role": "system",
+                "content": TODO_APPROVAL_SYSTEM_PROMPT + token_info,
+            })
+            for m in messages_copy:
+                final_messages.append(_clean_msg(m))
         else:
-            new_messages.append({"role": "user", "content": content})
+            # Augment existing system message with our token footer; do not
+            # add a second system message (confuses the model).
+            for i, m in enumerate(messages_copy):
+                if i == existing_system_idx:
+                    original = m.get("content", "")
+                    if isinstance(original, list):
+                        original = " ".join(
+                            p.get("text", "") or str(p)
+                            for p in original if isinstance(p, dict)
+                        )
+                    elif not isinstance(original, str):
+                        original = str(original)
+                    final_messages.append({
+                        **m,
+                        "content": original + token_info,
+                    })
+                else:
+                    final_messages.append(_clean_msg(m))
 
-        # Token count AFTER injection
-        tokens_after = self._count_tokens(new_messages)
+        # Optionally wrap the last user message with FIRST_MSG_RULES on a new
+        # session. Off by default — see __init__.
+        if is_new and self.inject_first_msg_rules:
+            user_msg = final_messages[last_user_idx + (1 if existing_system_idx is None else 0)]
+            content = user_msg.get("content", "")
+            if isinstance(content, list):
+                content = " ".join(
+                    p.get("text", "") or str(p)
+                    for p in content if isinstance(p, dict)
+                )
+            elif not isinstance(content, str):
+                content = str(content)
+            user_msg["content"] = FIRST_MSG_RULES + content
 
-        # Log token usage
+        tokens_after = self._count_tokens(final_messages)
+
         _log(
             logging.INFO, sid or "unknown", "todo_tokens",
             tokens_before=tokens_before,
@@ -980,34 +1063,12 @@ class TodoApprovalPromptCallback(CustomLogger):
             tokens_after - tokens_before, "new" if is_new else "continue",
         )
 
-        # Inject token info so LLM outputs it visibly in its response
-        token_info = (
-            f"\n\n[CONTEXT INFO — include in your response footer]\n"
-            f"Tokens used: ~{tokens_before:,} / {tokens_after:,} | "
-            f"Context window: 262,144 | "
-            f"Remaining: ~{max(262144 - tokens_after, 0):,}"
-        )
-        system_with_tokens = TODO_APPROVAL_SYSTEM_PROMPT + token_info
-
-        # Rebuild with token info in system prompt, keep all other messages
-        final_messages = []
-        final_messages.append({"role": "system", "content": system_with_tokens})
-        # Re-add existing messages except the original last user (we'll re-add it)
-        for i, m in enumerate(messages_copy):
-            if i == last_user_idx:
-                continue
-            final_messages.append(m)
-        # Re-add user message with or without rules wrapper
-        if is_new:
-            final_messages.append({"role": "user", "content": FIRST_MSG_RULES + content})
-        else:
-            final_messages.append({"role": "user", "content": content})
-
         data = dict(data)
         data["messages"] = final_messages
         logger.debug(
-            "TodoApprovalPrompt injected (new=%s) for model=%s (%d → %d msgs)",
-            is_new, model, len(messages), len(final_messages),
+            "TodoApprovalPrompt injected (new=%s, rules=%s) for model=%s (%d → %d msgs)",
+            is_new, self.inject_first_msg_rules, model,
+            len(messages), len(final_messages),
         )
         return data
 

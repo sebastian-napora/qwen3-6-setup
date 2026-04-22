@@ -104,10 +104,14 @@ async def main():
         _orig_warn(msg, *args, **kwargs)
     _qxt.logger.warning = _silence_float_warn
 
-    # ── Fallback system prompt (applies when client doesn't send one) ──────────
+    # Injected into every request that lacks a system message. Kept short so it
+    # doesn't force the model to over-think trivial prompts.
     ANTI_LOOP_SYSTEM = (
-        "You are a helpful coding assistant. "
-        "Provide direct, concise responses. Move forward with each step."
+        "You are a helpful, concise coding assistant. "
+        "Match response length to the request: trivial questions get trivial answers. "
+        "Do not repeat reasoning or restart from scratch. "
+        "Do not emit Error:/Exception:/Warning: labels unless there is a genuine error. "
+        "Stop as soon as the task is done."
     )
 
     # ── Build vLLM args ─────────────────────────────────────────────────────────
@@ -135,8 +139,11 @@ async def main():
         # ── Sampling defaults (seed is engine-level; rest via --override-generation-config) ─
         "--seed", "5678",
         "--reasoning-config", '{"reasoning_start_str": "<think>", "reasoning_end_str": "</think>"}',
+        # Qwen3 team-recommended sampling. presence/frequency penalties >0
+        # cause severe degradation (random word streams that never close
+        # </think>) — keep them at 0. repetition_penalty 1.05 is mild and safe.
         "--override-generation-config",
-        '{"temperature":1.0,"top_p":0.95,"top_k":20,"min_p":0.0,"max_tokens":64000,"repetition_penalty":1.0,"presence_penalty":1.5,"frequency_penalty":1.0,"thinking_token_budget":0}',
+        '{"temperature":0.7,"top_p":0.8,"top_k":20,"min_p":0.0,"max_tokens":102400,"repetition_penalty":1.05,"presence_penalty":0.0,"frequency_penalty":0.0,"thinking_token_budget":16384}',
     ]
 
     args = serve_parser.parse_args(argv)
@@ -155,6 +162,11 @@ async def main():
 
         import request_logging
         request_logging.install(app)
+        # NOTE: RequestLoggingMiddleware is intentionally NOT installed here.
+        # BaseHTTPMiddleware re-binds request._receive after reading the body,
+        # which conflicts with vLLM's listen_for_disconnect() task and corrupts
+        # non-streaming responses (returns "null" with content-length=4).
+        # Per-request logging is handled by the LiteLLM proxy callbacks instead.
         _log = request_logging._log
 
         await init_app_state(engine_client, app.state, args, supported_tasks)
@@ -176,6 +188,18 @@ async def main():
         _orig_create = serving_chat.create_chat_completion
 
         async def _create_with_reasoning_logging(chat_request, raw_request=None, **kwargs):
+            # Extract request_id from FastAPI Request headers or fall back to UUID
+            req_id = "unknown"
+            if raw_request is not None and hasattr(raw_request, "headers"):
+                req_id = raw_request.headers.get("x-request-id") or (
+                    raw_request.headers.get("x-llm-req-id") or req_id
+                )
+            if req_id == "unknown":
+                import uuid
+                req_id = str(uuid.uuid4())[:8]
+            elif len(req_id) > 16:
+                req_id = req_id[:16]
+
             # Inject anti-loop system prompt if none provided
             msgs = getattr(chat_request, "messages", []) or []
             has_system = any(m.get("role") == "system" and m.get("content", "").strip()
@@ -184,7 +208,6 @@ async def main():
                 msgs.insert(0, {"role": "system", "content": ANTI_LOOP_SYSTEM})
                 chat_request.messages = msgs
 
-            req_id = getattr(chat_request, "extra_query_params", {}).get("request_id", "unknown")
             _rl.log_reasoning_separator(req_id, "request_start",
                                         model=getattr(chat_request, "model", "?"),
                                         msgs=len(getattr(chat_request, "messages", [])))
