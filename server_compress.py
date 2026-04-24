@@ -19,7 +19,7 @@ import asyncio
 import threading
 import time
 from pathlib import Path
-
+import sys
 import litellm
 
 import qwen_compress       # noqa: F401 — strips thinking tokens from history
