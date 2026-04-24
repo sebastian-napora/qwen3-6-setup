@@ -381,5 +381,11 @@ def dashboard(session: Optional[str] = Query(None)):
 
 # ── Entry point ────────────────────────────────────────────────────────────────
 
-if __name__ == "__main__":
+def main():
+    """Synchronous entry point for console_scripts."""
+    import uvicorn
     uvicorn.run(app, host=STATS_HOST, port=STATS_PORT, log_level="warning")
+
+
+if __name__ == "__main__":
+    main()
