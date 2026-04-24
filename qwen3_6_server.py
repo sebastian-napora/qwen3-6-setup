@@ -121,15 +121,20 @@ async def main():
         "RedHatAI/Qwen3.6-35B-A3B-NVFP4",
         "--trust-remote-code",
         "--dtype", "bfloat16",
-        "--max-model-len", "232144",          # model native limit (256K)
-        "--gpu-memory-utilization", "0.45",    # reduced for multimodal encoder cache
+        "--max-model-len", "262144",           # full native 256K context
+        "--gpu-memory-utilization", "0.55",    # ~70 GB of 128 GB unified; leaves ~58 GB for Grace CPU/OS
+        "--kv-cache-dtype", "fp8_e4m3",        # halves KV cache VRAM vs bfloat16
+        "--max-num-seqs", "1",                 # single user/session — no concurrency needed
+        "--max-num-batched-tokens", "32768",   # large chunks = faster prefill for long Copilot contexts
         "--moe-backend", "cutlass",
-        "--enforce-eager",
+        "--enable-chunked-prefill",            # better throughput for long prompts (replaces --enforce-eager)
         "--disable-log-stats",
         "--enable-prefix-caching",
         "--tool-call-parser", "qwen3_xml",
         "--reasoning-parser", "qwen3",
         "--enable-auto-tool-choice",
+        "--default-chat-template-kwargs", '{"preserve_thinking":true}',  # keep <think> blocks in chat template
+        "--limit-mm-per-prompt", '{"image":0,"video":0,"audio":0}',      # no mm allocation for text-only model
         "--port", "11112",
         "--host", "0.0.0.0",
         # ── Sampling defaults (seed is engine-level; rest via --override-generation-config) ─
