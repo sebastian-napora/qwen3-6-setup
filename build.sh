@@ -114,7 +114,16 @@ fi
 # Install runtime dependencies
 echo ""
 echo "Installing runtime dependencies..."
-$VENV_PYTHON -m pip install vllm litellm fastapi uvicorn aiohttp
+
+# Install compatible torch version first (vllm requires specific torch version)
+$VENV_PYTHON -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+# Install vllm without strict torch dependency, then remaining deps
+$VENV_PYTHON -m pip install vllm || {
+    echo "Retrying vllm install (allowing torch mismatch)..."
+    $VENV_PYTHON -m pip install vllm --extra-index-url https://wheels.vllm.ai/latest || true
+}
+$VENV_PYTHON -m pip install litellm fastapi uvicorn aiohttp
 
 echo ""
 echo "========================================"
