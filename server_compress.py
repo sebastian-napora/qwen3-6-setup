@@ -15,6 +15,9 @@ Usage:
 
 import os
 import logging
+import asyncio
+import threading
+import time
 from pathlib import Path
 
 import litellm
@@ -59,10 +62,18 @@ litellm_main_logger = logging.getLogger("litellm")
 litellm_main_logger.setLevel(logging.DEBUG)
 
 logger = logging.getLogger("server_compress")
+_proxy_logger = logging.getLogger("proxy_io")
+_proxy_logger.setLevel(logging.INFO)
+_proxy_logger.handlers.clear()
+_ch = logging.StreamHandler(sys.stdout)
+_ch.setFormatter(logging.Formatter("%(message)s"))
+_proxy_logger.addHandler(_ch)
 
 LITELLM_PORT = os.environ.get("LITE_LLM_PROXY_PORT", "11111")
 LITELLM_HOST = os.environ.get("LITE_LLM_PROXY_HOST", "0.0.0.0")
 CONFIG_PATH = Path(__file__).parent / "lite_llm_config.yaml"
+LOG_DIR = Path(__file__).parent / "logs"
+LOG_DIR.mkdir(exist_ok=True)
 
 logger.info("Starting LiteLLM proxy on %s:%s", LITELLM_HOST, LITELLM_PORT)
 logger.info("Config: %s", CONFIG_PATH)

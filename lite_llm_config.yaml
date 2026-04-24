@@ -27,6 +27,12 @@ litellm_settings:
   drop_params: true
   request_timeout: 300
   set_verbose: false
+  system_prompt: |
+    You are a helpful, concise coding assistant.
+    Match response length to the request: trivial questions get trivial answers.
+    Do not repeat reasoning or restart from scratch.
+    Do not emit Error:/Exception:/Warning: labels unless there is a genuine error.
+    Stop as soon as the task is done.
 
 general_settings:
   completion_model: "qwen3.6-35b-nvfp4"

@@ -18,7 +18,7 @@ Think-budget instructions:
   - Think once, conclude once — do not re-think the same point.
 """
 
-import sys
+import logging
 import os
 import json
 import logging
@@ -89,6 +89,27 @@ async def main():
     from vllm.entrypoints.openai.cli_args import make_arg_parser, validate_parsed_serve_args
     from vllm.utils.argparse_utils import FlexibleArgumentParser
 
+    # ── Patch vLLM's broken logger.warning before engine loads ─────────────────
+    # vLLM's qwen3xml_tool_parser._convert_param_value logs a 3-arg warning but
+    # passes only 2 args, causing a cascading logging loop.  Silence it.
+    import vllm.tool_parsers.qwen3xml_tool_parser as _qxt
+    _orig_warn = _qxt.logger.warning
+    def _silence_float_warn(msg, *args, **kwargs):
+        if "is not a float in tool" in str(msg):
+            return
+        _orig_warn(msg, *args, **kwargs)
+    _qxt.logger.warning = _silence_float_warn
+
+    # Injected into every request that lacks a system message. Kept short so it
+    # doesn't force the model to over-think trivial prompts.
+    ANTI_LOOP_SYSTEM = (
+        "You are a helpful, concise coding assistant. "
+        "Match response length to the request: trivial questions get trivial answers. "
+        "Do not repeat reasoning or restart from scratch. "
+        "Do not emit Error:/Exception:/Warning: labels unless there is a genuine error. "
+        "Stop as soon as the task is done."
+    )
+
     # ── Build vLLM args ─────────────────────────────────────────────────────────
     parser = FlexibleArgumentParser(prog="qwen3-6-server")
     subparsers = parser.add_subparsers(dest="command")
@@ -104,11 +125,20 @@ async def main():
         "--moe-backend", "cutlass",
         "--enforce-eager",
         "--disable-log-stats",
+        "--enable-prefix-caching",
         "--tool-call-parser", "qwen3_xml",
         "--reasoning-parser", "qwen3",
         "--enable-auto-tool-choice",
         "--port", "11112",
         "--host", "0.0.0.0",
+        # ── Sampling defaults (seed is engine-level; rest via --override-generation-config) ─
+        "--seed", "5678",
+        "--reasoning-config", '{"reasoning_start_str": "<think>", "reasoning_end_str": "</think>"}',
+        # Qwen3 team-recommended sampling. presence/frequency penalties >0
+        # cause severe degradation (random word streams that never close
+        # </think>) — keep them at 0. repetition_penalty 1.05 is mild and safe.
+        "--override-generation-config",
+        '{"temperature":0.7,"top_p":0.8,"top_k":20,"min_p":0.0,"max_tokens":102400,"repetition_penalty":1.05,"presence_penalty":0.0,"frequency_penalty":0.0,"thinking_token_budget":16384}',
     ]
 
     args = serve_parser.parse_args(argv)
@@ -123,8 +153,17 @@ async def main():
         supported_tasks = await engine_client.get_supported_tasks()
         model_config = engine_client.model_config
 
-        # ── Build FastAPI app and register compression routes ───────────────────
         app = build_app(args, supported_tasks, model_config)
+
+        import request_logging
+        request_logging.install(app)
+        # NOTE: RequestLoggingMiddleware is intentionally NOT installed here.
+        # BaseHTTPMiddleware re-binds request._receive after reading the body,
+        # which conflicts with vLLM's listen_for_disconnect() task and corrupts
+        # non-streaming responses (returns "null" with content-length=4).
+        # Per-request logging is handled by the LiteLLM proxy callbacks instead.
+        _log = request_logging._log
+
         await init_app_state(engine_client, app.state, args, supported_tasks)
 
         from fastapi import Request
@@ -206,13 +245,11 @@ async def main():
         async def compress(request: Request):
             """
             LLM-powered context compression.
-
             POST body:
               {
                 "messages": [...chat history...],
                 "target_tokens": 8192   # optional, default 8192
               }
-
             Returns:
               {
                 "compressed": {
@@ -254,6 +291,11 @@ async def main():
 
             target_tokens = body.get("target_tokens", 8192)
 
+            input_preview = f"[{len(messages)} msgs, target_tokens={target_tokens}]"
+            _log(logging.INFO, "N/A", "compress_request_start",
+                 msg_count=len(messages), target_tokens=target_tokens,
+                 input_preview=input_preview)
+
             compress_messages = [
                 {"role": "system", "content": COMPRESS_PROMPT},
                 {"role": "user", "content": json.dumps(messages, indent=2, ensure_ascii=False)},
@@ -267,9 +309,20 @@ async def main():
                 stream=False,
             )
 
-            result = await serving_chat.create_chat_completion(chat_req)
+            try:
+                result = await serving_chat.create_chat_completion(chat_req)
+            except Exception as e:
+                tb = traceback.format_exc()
+                _log(logging.ERROR, "N/A", "compress_error", error=str(e),
+                     error_type=type(e).__name__, traceback=tb, messages_len=len(messages))
+                return JSONResponse(
+                    content={"error": str(e), "error_type": type(e).__name__},
+                    status_code=500,
+                )
 
             if hasattr(result, "error"):
+                _log(logging.ERROR, "N/A", "compress_result_error",
+                     error=str(result.error), messages_len=len(messages))
                 return JSONResponse(
                     content={"error": str(result.error)},
                     status_code=getattr(result.error, "code", 500),
@@ -291,6 +344,12 @@ async def main():
                     "preserved_messages": [],
                     "token_budget_used": None,
                 }
+
+            _log(logging.INFO, "N/A", "compress_response",
+                 summary_chars=len(compressed.get("summary", "")),
+                 preserved=len(compressed.get("preserved_messages", [])),
+                 token_budget=compressed.get("token_budget_used"),
+                 output_preview=compressed.get("summary", "")[:300])
 
             return {
                 "compressed": compressed,
@@ -535,10 +594,16 @@ async def main():
 
         # ── Serve ───────────────────────────────────────────────────────────────
         listen_address, sock = setup_server(args)
+<<<<<<< HEAD
         print(f"\n🚀 Blackwell NVFP4 Server @ 256K Context")
         print(f"📡 Chat API:    http://0.0.0.0:11112/v1/chat/completions")
         print(f"🖼️  Image API:  http://0.0.0.0:11112/v1/chat/image")
         print(f"📦 Compress:    http://0.0.0.0:11112/compress")
+=======
+        print(f"\n🚀 Blackwell NVFP4 Server @ 200K Context")
+        print(f"📡 API:        http://0.0.0.0:{args.port}/v1")
+        print(f"📦 Compress:   http://0.0.0.0:{args.port}/compress")
+>>>>>>> main
         print(f"🔧 Parsers:    qwen3_xml + qwen3 reasoning")
         print()
         await serve_http(
