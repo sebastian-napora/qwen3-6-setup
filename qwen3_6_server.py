@@ -121,7 +121,7 @@ async def main():
         "--trust-remote-code",
         "--dtype", "bfloat16",
         "--max-model-len", "232144",          # model native limit (256K)
-        "--gpu-memory-utilization", "0.35",    # reduced for multimodal encoder cache
+        "--gpu-memory-utilization", "0.45",    # reduced for multimodal encoder cache
         "--moe-backend", "cutlass",
         "--enforce-eager",
         "--disable-log-stats",
@@ -594,16 +594,10 @@ async def main():
 
         # ── Serve ───────────────────────────────────────────────────────────────
         listen_address, sock = setup_server(args)
-<<<<<<< HEAD
         print(f"\n🚀 Blackwell NVFP4 Server @ 256K Context")
         print(f"📡 Chat API:    http://0.0.0.0:11112/v1/chat/completions")
         print(f"🖼️  Image API:  http://0.0.0.0:11112/v1/chat/image")
         print(f"📦 Compress:    http://0.0.0.0:11112/compress")
-=======
-        print(f"\n🚀 Blackwell NVFP4 Server @ 200K Context")
-        print(f"📡 API:        http://0.0.0.0:{args.port}/v1")
-        print(f"📦 Compress:   http://0.0.0.0:{args.port}/compress")
->>>>>>> main
         print(f"🔧 Parsers:    qwen3_xml + qwen3 reasoning")
         print()
         await serve_http(
