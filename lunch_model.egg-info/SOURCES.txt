@@ -1,0 +1,8 @@
+pyproject.toml
+readm.md
+lunch_model.egg-info/PKG-INFO
+lunch_model.egg-info/SOURCES.txt
+lunch_model.egg-info/dependency_links.txt
+lunch_model.egg-info/entry_points.txt
+lunch_model.egg-info/requires.txt
+lunch_model.egg-info/top_level.txt
