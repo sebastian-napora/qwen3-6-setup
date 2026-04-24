@@ -33,6 +33,7 @@ mkdir -p dist/bundle
 # Build Python wheel
 echo ""
 echo "[2/4] Building Python wheel..."
+python3 -m pip install --quiet build
 python3 -m build --wheel --outdir dist/
 
 WHEEL_FILE=$(ls dist/*.whl 2>/dev/null | head -1)
