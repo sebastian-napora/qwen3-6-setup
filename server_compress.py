@@ -22,9 +22,9 @@ from pathlib import Path
 import sys
 import litellm
 
-import qwen_compress       # noqa: F401 — strips thinking tokens from history
+# import qwen_compress       # noqa: F401 — strips thinking tokens from history
 import qwen_token_tracker  # noqa: F401 — records per-request token usage
-qwen_compress.register()
+# qwen_compress.register()
 qwen_token_tracker.register()
 
 # Setup detailed logging

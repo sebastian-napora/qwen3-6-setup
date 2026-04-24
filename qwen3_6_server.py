@@ -122,7 +122,7 @@ async def main():
         "--trust-remote-code",
         "--dtype", "bfloat16",
         "--max-model-len", "262144",           # full native 256K context
-        "--gpu-memory-utilization", "0.55",    # ~70 GB of 128 GB unified; leaves ~58 GB for Grace CPU/OS
+        "--gpu-memory-utilization", "0.30",    # ~70 GB of 128 GB unified; leaves ~58 GB for Grace CPU/OS
         "--kv-cache-dtype", "fp8_e4m3",        # halves KV cache VRAM vs bfloat16
         "--max-num-seqs", "1",                 # single user/session — no concurrency needed
         "--max-num-batched-tokens", "32768",   # large chunks = faster prefill for long Copilot contexts
@@ -133,13 +133,13 @@ async def main():
         "--tool-call-parser", "qwen3_xml",
         "--reasoning-parser", "qwen3",
         "--enable-auto-tool-choice",
-        "--default-chat-template-kwargs", '{"preserve_thinking":true}',  # keep <think> blocks in chat template
+        "--default-chat-template-kwargs", '{"enable_thinking":false}',  # disable thinking by default; clients opt-in via extra_body
         "--limit-mm-per-prompt", '{"image":0,"video":0,"audio":0}',      # no mm allocation for text-only model
         "--port", "11112",
         "--host", "0.0.0.0",
         # ── Sampling defaults (seed is engine-level; rest via --override-generation-config) ─
         "--seed", "5678",
-        "--reasoning-config", '{"reasoning_start_str": "<think>", "reasoning_end_str": "</think>"}',
+        #"--reasoning-config", '{"reasoning_start_str": "<think>", "reasoning_end_str": "</think>"}',
         # Qwen3 team-recommended sampling. presence/frequency penalties >0
         # cause severe degradation (random word streams that never close
         # </think>) — keep them at 0. repetition_penalty 1.05 is mild and safe.
@@ -461,9 +461,7 @@ async def main():
                 }
             ]
 
-            extra_body = {}
-            if thinking:
-                extra_body["chat_template_kwargs"] = {"enable_thinking": True}
+            extra_body = {"chat_template_kwargs": {"enable_thinking": thinking}}
 
             chat_req = ChatCompletionRequest(
                 model=model_name,
@@ -471,7 +469,7 @@ async def main():
                 temperature=0.7,
                 max_tokens=2048,
                 stream=False,
-                extra_body=extra_body if extra_body else None,
+                extra_body=extra_body,
             )
 
             try:
@@ -558,9 +556,7 @@ async def main():
                 }
             ]
 
-            extra_body = {}
-            if thinking:
-                extra_body["chat_template_kwargs"] = {"enable_thinking": True}
+            extra_body = {"chat_template_kwargs": {"enable_thinking": thinking}}
 
             chat_req = ChatCompletionRequest(
                 model=model_name,
@@ -568,7 +564,7 @@ async def main():
                 temperature=0.7,
                 max_tokens=2048,
                 stream=False,
-                extra_body=extra_body if extra_body else None,
+                extra_body=extra_body,
             )
 
             try:
