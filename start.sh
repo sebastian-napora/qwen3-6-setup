@@ -24,11 +24,26 @@ else
     VENV_PYTHON="python3"
 fi
 
+# Entry point commands (available when package is installed via pip/wheel)
+# Falls back to relative paths for development (running from source dir)
+RUN_SERVER="$($VENV_PYTHON -c "import shutil; print(shutil.which('qwen-server') or '')" 2>/dev/null)"
+RUN_PROXY="$($VENV_PYTHON -c "import shutil; print(shutil.which('qwen-compress') or '')" 2>/dev/null)"
+RUN_STATS="$($VENV_PYTHON -c "import shutil; print(shutil.which('qwen-stats') or '')" 2>/dev/null)"
+
+# Fall back to relative paths (development mode)
+RUN_SERVER="${RUN_SERVER:-$SCRIPT_DIR/qwen3_6_server.py}"
+RUN_PROXY="${RUN_PROXY:-$SCRIPT_DIR/server_compress.py}"
+RUN_STATS="${RUN_STATS:-$SCRIPT_DIR/qwen_token_stats_server.py}"
+
 mkdir -p logs
 
 start_backend() {
     echo "🚀 Starting vLLM backend (port 11112)..."
-    $VENV_PYTHON qwen3_6_server.py &
+    if [[ -x "$RUN_SERVER" ]] && [[ ! "$RUN_SERVER" == *.py ]]; then
+        $RUN_SERVER &
+    else
+        $VENV_PYTHON "$RUN_SERVER" &
+    fi
     echo "Backend PID: $!"
 }
 
@@ -47,13 +62,21 @@ print(sid, end='')
 
 start_stats() {
     echo "🚀 Starting token stats server (port 11113)..."
-    $VENV_PYTHON qwen_token_stats_server.py &
+    if [[ -x "$RUN_STATS" ]] && [[ ! "$RUN_STATS" == *.py ]]; then
+        $RUN_STATS &
+    else
+        $VENV_PYTHON "$RUN_STATS" &
+    fi
     echo "Stats PID: $!"
 }
 
 start_proxy() {
     echo "🚀 Starting LiteLLM proxy (port 11111)..."
-    $VENV_PYTHON server_compress.py &
+    if [[ -x "$RUN_PROXY" ]] && [[ ! "$RUN_PROXY" == *.py ]]; then
+        $RUN_PROXY &
+    else
+        $VENV_PYTHON "$RUN_PROXY" &
+    fi
     echo "Proxy PID: $!"
 }
 
