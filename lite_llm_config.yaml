@@ -1,14 +1,10 @@
-# LiteLLM Proxy Configuration for Qwen3.6-35B-NVFP4
+# LiteLLM Proxy Configuration for Qwen3.6-35B-A3B-NVFP4
 #
 # Architecture:
 #   Copilot → LiteLLM (11111) → vLLM (11112)
-#                                        ↑
-#                                 /compress @ 11112
 #
 # Start vLLM backend (11112):  python3 qwen3_6_server.py
 # Start LiteLLM proxy (11111): python3 server_compress.py
-#
-# Or use lite-llm project for multi-model routing.
 
 model_list:
   - model_name: qwen3.6-35b-nvfp4
@@ -16,6 +12,16 @@ model_list:
       model: openai/RedHatAI/Qwen3.6-35B-A3B-NVFP4
       api_base: http://localhost:11112/v1
       api_key: none
+      max_tokens: 60000
+      temperature: 0.7
+
+  - model_name: qwen36flash
+    litellm_params:
+      model: openai/RedHatAI/Qwen3.6-35B-A3B-NVFP4
+      api_base: http://localhost:11112/v1
+      api_key: none
+      max_tokens: 60000
+      temperature: 0.7
 
 litellm_settings:
   drop_params: true
@@ -23,4 +29,4 @@ litellm_settings:
   set_verbose: false
 
 general_settings:
-  completion_model: ""
+  completion_model: "qwen3.6-35b-nvfp4"
