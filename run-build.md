@@ -87,6 +87,34 @@ Copilot → LiteLLM (11111) → vLLM (11112)
 - Python 3.12+
 - 128GB+ system RAM recommended for Qwen3.6-35B-A3B-NVFP4
 
+## Linux (NVIDIA)
+
+vllm has pre-built wheels for Linux on NVIDIA GPUs. The install script handles this automatically.
+
+```bash
+./install.sh
+```
+
+## macOS / No GPU
+
+vllm **requires Linux + NVIDIA GPU**. On macOS or systems without NVIDIA:
+
+1. Run install.sh (vllm will be skipped)
+2. Use Docker for vllm instead:
+
+```bash
+docker run -d \
+  --name vllm \
+  -p 11112:8000 \
+  --runtime nvidia \
+  --gpus all \
+  -v ~/.cache/huggingface:/root/.cache/huggingface \
+  vllm/vllm-openai:latest \
+  --model Qwen/Qwen3.6-35B-A3B-NVFP4
+```
+
+Or use a cloud GPU instance (Lambda, RunPod, etc.) as the backend, and point `lite_llm_config.yaml` to that remote URL.
+
 ## Custom model path
 
 If the model is not in the default HuggingFace cache, set the path in `qwen3_6_server.py`:

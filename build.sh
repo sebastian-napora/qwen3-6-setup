@@ -111,19 +111,30 @@ else
     echo "WARNING: No wheel file found. Install manually: pip install *.whl"
 fi
 
+# Detect OS
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    echo "   macOS detected (vllm pre-built wheels not available)"
+    echo "   vllm will need to be installed manually or via Docker"
+    echo ""
+    echo "   Option 1: Use Docker"
+    echo "     docker run -p 11112:8000 vllm/vllm-openai:latest"
+    echo ""
+    echo "   Option 2: Pre-install vllm (see run-build.md)"
+fi
+
 # Install runtime dependencies
 echo ""
 echo "Installing runtime dependencies..."
 
-# Install compatible torch version first (vllm requires specific torch version)
-$VENV_PYTHON -m pip install torch --index-url https://download.pytorch.org/whl/cpu
-
-# Install vllm without strict torch dependency, then remaining deps
-$VENV_PYTHON -m pip install vllm || {
-    echo "Retrying vllm install (allowing torch mismatch)..."
-    $VENV_PYTHON -m pip install vllm --extra-index-url https://wheels.vllm.ai/latest || true
-}
-$VENV_PYTHON -m pip install litellm fastapi uvicorn aiohttp
+if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+    # Linux: install vllm from vllm.ai wheels (pre-built, no source build needed)
+    $VENV_PYTHON -m pip install --extra-index-url https://wheels.vllm.ai/latest vllm
+    $VENV_PYTHON -m pip install litellm fastapi uvicorn aiohttp
+else
+    # macOS / other: skip vllm (requires Linux), install only what's available
+    echo "   Skipping vllm (requires Linux)"
+    $VENV_PYTHON -m pip install litellm fastapi uvicorn aiohttp
+fi
 
 echo ""
 echo "========================================"
