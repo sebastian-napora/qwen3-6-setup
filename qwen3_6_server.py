@@ -25,6 +25,7 @@ import logging
 import traceback
 import base64
 from datetime import datetime
+import sys
 
 # Allow long max_model_len (model's native limit is 262144)
 os.environ["VLLM_ALLOW_LONG_MAX_MODEL_LEN"] = "1"
