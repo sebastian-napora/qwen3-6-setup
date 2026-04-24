@@ -5,4 +5,4 @@ dist
 qwen_server.egg-info
 .xtread
 __pycache__
-/logs
+logs

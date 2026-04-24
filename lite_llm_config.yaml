@@ -1,14 +1,10 @@
-# LiteLLM Proxy Configuration for Qwen3.6-35B-NVFP4
+# LiteLLM Proxy Configuration for Qwen3.6-35B-A3B-NVFP4
 #
 # Architecture:
 #   Copilot → LiteLLM (11111) → vLLM (11112)
-#                                        ↑
-#                                 /compress @ 11112
 #
 # Start vLLM backend (11112):  python3 qwen3_6_server.py
 # Start LiteLLM proxy (11111): python3 server_compress.py
-#
-# Or use lite-llm project for multi-model routing.
 
 model_list:
   - model_name: qwen3.6-35b-nvfp4
@@ -16,22 +12,16 @@ model_list:
       model: openai/RedHatAI/Qwen3.6-35B-A3B-NVFP4
       api_base: http://localhost:11112/v1
       api_key: none
-      # ── Sampling (Qwen3 team-recommended; aggressive penalties cause
-      # ── degenerate random-word streams that never close </think>) ─────────
+      max_tokens: 60000
       temperature: 0.7
-      top_p: 0.8
-      top_k: 20
-      min_p: 0.0
-      max_tokens: 102400
-      repetition_penalty: 1.05
-      presence_penalty: 0.0
-      frequency_penalty: 0.0
-      stop: ["<|im_end|>", "<|endoftext|>"]
-      # thinking budget (tokens allocated for <|think|> chain) — must be in extra_body
-      extra_body:
-        chat_template_kwargs:
-          enable_thinking: true
-        thinking_token_budget: 16384
+
+  - model_name: qwen36flash
+    litellm_params:
+      model: openai/RedHatAI/Qwen3.6-35B-A3B-NVFP4
+      api_base: http://localhost:11112/v1
+      api_key: none
+      max_tokens: 60000
+      temperature: 0.7
 
 litellm_settings:
   drop_params: true
@@ -45,4 +35,4 @@ litellm_settings:
     Stop as soon as the task is done.
 
 general_settings:
-  completion_model: ""
+  completion_model: "qwen3.6-35b-nvfp4"
