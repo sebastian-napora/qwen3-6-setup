@@ -1,3 +1,19 @@
+Metadata-Version: 2.4
+Name: lunch-model
+Version: 0.1.0
+Summary: Local vLLM API server for Qwen3.6-35B-A3B-NVFP4 with compression endpoints
+Requires-Python: >=3.12
+Description-Content-Type: text/markdown
+Requires-Dist: litellm>=1.0
+Requires-Dist: aiohttp>=3.9
+Requires-Dist: fastapi>=0.115
+Requires-Dist: uvicorn>=0.34
+Provides-Extra: dev
+Requires-Dist: build>=1.0; extra == "dev"
+Requires-Dist: pyinstaller>=6.0; extra == "dev"
+Provides-Extra: runtime
+Requires-Dist: vllm-mlx>=0.2; extra == "runtime"
+
 # Qwen3.6-35B-NVFP4 vLLM Backend
 
 This is the **vLLM backend** for `mlx-community/Qwen3.6-35B-A3B-4bit`. It serves the model on port `11112` with an LLM-powered `/compress` endpoint.
