@@ -262,7 +262,7 @@ def _install_optional_request_logging(app: Any):
     This does not install BaseHTTPMiddleware here.
     """
     try:
-        import request_logging  # type: ignore
+        from src import request_logging  # type: ignore
 
         install = getattr(request_logging, "install", None)
         if callable(install):

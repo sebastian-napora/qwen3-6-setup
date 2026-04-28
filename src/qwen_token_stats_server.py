@@ -21,11 +21,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-# Allow imports from parent directory (qwen_token_tracker lives here)
-_HERE = Path(__file__).parent
-sys.path.insert(0, str(_HERE))
-
-import qwen_token_tracker as tracker
+from src import qwen_token_tracker as tracker
 from fastapi import FastAPI, Query
 from fastapi.responses import HTMLResponse
 import uvicorn

@@ -27,7 +27,7 @@ else
 fi
 
 # If running from bundle (no .py files here), install the wheel first
-if [ ! -f "$SCRIPT_DIR/qwen3_6_server.py" ] && [ -f "$SCRIPT_DIR/lunch_model-"*.whl ]; then
+if [ ! -f "$SCRIPT_DIR/src/qwen3_6_server.py" ] && [ -f "$SCRIPT_DIR/lunch_model-"*.whl ]; then
     echo "📦 Installing lunch-model package..."
     $VENV_PYTHON -m pip install --quiet "$SCRIPT_DIR"/lunch_model-*.whl
 fi
@@ -39,9 +39,9 @@ RUN_PROXY="$($VENV_PYTHON -c "import shutil; print(shutil.which('qwen-compress')
 RUN_STATS="$($VENV_PYTHON -c "import shutil; print(shutil.which('qwen-stats') or '')" 2>/dev/null)"
 
 # Fall back to relative paths (development mode)
-RUN_SERVER="${RUN_SERVER:-$SCRIPT_DIR/qwen3_6_server.py}"
-RUN_PROXY="${RUN_PROXY:-$SCRIPT_DIR/server_compress.py}"
-RUN_STATS="${RUN_STATS:-$SCRIPT_DIR/qwen_token_stats_server.py}"
+RUN_SERVER="${RUN_SERVER:-$SCRIPT_DIR/src/qwen3_6_server.py}"
+RUN_PROXY="${RUN_PROXY:-$SCRIPT_DIR/src/server_compress.py}"
+RUN_STATS="${RUN_STATS:-$SCRIPT_DIR/src/qwen_token_stats_server.py}"
 
 mkdir -p logs
 
@@ -60,9 +60,9 @@ new_token_session() {
     # Both the proxy and the stats server read this file at startup, so
     # every ./start.sh run begins a clean session automatically.
     NEW_SID=$($VENV_PYTHON -c "
-import sys; sys.path.insert(0, '$SCRIPT_DIR')
-import qwen_token_tracker
-sid = qwen_token_tracker.new_session()
+import sys; sys.path.insert(0, '$SCRIPT_DIR/src')
+from qwen_token_tracker import new_session
+sid = new_session()
 print(sid, end='')
 " 2>/dev/null)
     echo "📊 New token session: ${NEW_SID:-unknown}"

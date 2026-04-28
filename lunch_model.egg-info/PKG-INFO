@@ -6,17 +6,17 @@ Requires-Python: >=3.12
 Description-Content-Type: text/markdown
 Requires-Dist: litellm>=1.0
 Requires-Dist: aiohttp>=3.9
+Requires-Dist: fastapi>=0.115
+Requires-Dist: uvicorn>=0.34
 Provides-Extra: dev
 Requires-Dist: build>=1.0; extra == "dev"
 Requires-Dist: pyinstaller>=6.0; extra == "dev"
 Provides-Extra: runtime
-Requires-Dist: vllm>=0.8; extra == "runtime"
-Requires-Dist: fastapi>=0.115; extra == "runtime"
-Requires-Dist: uvicorn>=0.34; extra == "runtime"
+Requires-Dist: vllm-mlx>=0.2; extra == "runtime"
 
 # Qwen3.6-35B-NVFP4 vLLM Backend
 
-This is the **vLLM backend** for `RedHatAI/Qwen3.6-35B-A3B-NVFP4`. It serves the model on port `11112` with an LLM-powered `/compress` endpoint.
+This is the **vLLM backend** for `mlx-community/Qwen3.6-35B-A3B-4bit`. It serves the model on port `11112` with an LLM-powered `/compress` endpoint.
 
 **This server is not called directly by clients.** It is started manually (see Quick Start) and sits behind the LiteLLM proxy which VS Code Copilot talks to.
 
@@ -77,7 +77,7 @@ python3 qwen3-6-server.py
 
 ```bash
 python3 qwen3-6-server.py \
-  --model RedHatAI/Qwen3.6-35B-A3B-NVFP4 \
+  --model mlx-community/Qwen3.6-35B-A3B-4bit \
   --port 11112 \
   --host 0.0.0.0 \
   --gpu-memory-utilization 0.92 \

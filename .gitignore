@@ -6,3 +6,6 @@ qwen_server.egg-info
 .xtread
 __pycache__
 logs
+
+venv-fallback
+venvs

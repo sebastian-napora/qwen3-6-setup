@@ -23,7 +23,7 @@ import sys
 import litellm
 
 # import qwen_compress       # noqa: F401 — strips thinking tokens from history
-import qwen_token_tracker  # noqa: F401 — records per-request token usage
+from src import qwen_token_tracker  # noqa: F401 — records per-request token usage
 # qwen_compress.register()
 qwen_token_tracker.register()
 
@@ -88,7 +88,7 @@ logger.info("Registered custom callbacks: %d", len(registered_callbacks))
 for cb in registered_callbacks:
     logger.info("  - %s", type(cb).__name__)
 
-if __name__ == "__main__":
+def main():
     import uvicorn
     uvicorn.run(
         "litellm.proxy.proxy_server:app",
@@ -97,3 +97,8 @@ if __name__ == "__main__":
         reload=False,
         log_level="debug",
     )
+
+
+if __name__ == "__main__":
+    main()
+

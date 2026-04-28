@@ -21,6 +21,30 @@ echo "========================================"
 echo "  lunch-model build script v$VERSION"
 echo "========================================"
 
+# Detect or create venv for building
+echo ""
+echo "[0/4] Setting up build environment..."
+if [ ! -d "venv" ]; then
+    echo "   Creating build venv..."
+    python3 -m venv venv
+fi
+VENV_PYTHON="venv/bin/python3"
+VENV_PIP="venv/bin/pip"
+
+# Bootstrap pip if missing (Homebrew Python workaround)
+if [ ! -f "venv/bin/pip" ] && [ ! -f "venv/bin/pip3" ]; then
+    echo "   Bootstrapping pip..."
+    curl -sS https://bootstrap.pypa.io/get-pip.py | $VENV_PYTHON
+fi
+
+# Upgrade pip
+echo "   Upgrading pip..."
+$VENV_PIP install --quiet --upgrade pip
+
+# Install build tool
+echo "   Installing build package..."
+$VENV_PIP install --quiet build
+
 # Clean old builds
 echo ""
 echo "[1/4] Cleaning old builds..."
@@ -33,8 +57,7 @@ mkdir -p dist/bundle
 # Build Python wheel
 echo ""
 echo "[2/4] Building Python wheel..."
-python3 -m pip install --quiet build
-python3 -m build --wheel --outdir dist/
+$VENV_PYTHON -m build --wheel --outdir dist/
 
 WHEEL_FILE=$(ls dist/*.whl 2>/dev/null | head -1)
 if [ -z "$WHEEL_FILE" ]; then
@@ -54,14 +77,8 @@ cp build.md dist/bundle/ 2>/dev/null || true
 cp run-build.md dist/bundle/ 2>/dev/null || true
 mkdir -p dist/bundle/scripts
 
-# Copy Python source files for standalone / dev-mode execution
-cp qwen3_6_server.py dist/bundle/ 2>/dev/null || true
-cp server_compress.py dist/bundle/ 2>/dev/null || true
-cp qwen_token_stats_server.py dist/bundle/ 2>/dev/null || true
-cp qwen_token_tracker.py dist/bundle/ 2>/dev/null || true
-cp qwen36_compress.py dist/bundle/ 2>/dev/null || true
-cp qwen_compress.py dist/bundle/ 2>/dev/null || true
-cp __init__.py dist/bundle/ 2>/dev/null || true
+# Copy the src/ package directory
+cp -r src/ dist/bundle/src/ 2>/dev/null || true
 
 # Create install.sh (will be copied to bundle)
 cat > dist/bundle/install.sh << 'INSTALL_EOF'
@@ -169,6 +186,89 @@ echo ""
 INSTALL_EOF
 chmod +x dist/bundle/install.sh
 
+# Create deploy helper script (goes inside bundle/)
+cat > dist/bundle/deploy.sh << 'DEPLOY_EOF'
+#!/bin/bash
+#
+# Deploy helper — run this after extracting the tarball
+#
+# Usage:
+#   ./deploy.sh          # interactive deployment
+#   ./deploy.sh --yes    # skip confirmation prompts
+#
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# Check if already inside bundle directory
+if [ ! -f "install.sh" ] || [ ! -f "start.sh" ]; then
+    echo "ERROR: This script must be run from inside the extracted bundle directory."
+    echo "       Make sure you ran: tar -xzf lunch-model-*.tar.gz"
+    echo "       Then: cd bundle/"
+    exit 1
+fi
+
+# Detect if running from a fresh extraction or already installed
+if [ -d "venv" ]; then
+    echo "Installation detected (venv found)."
+    echo ""
+    echo "To start the servers:"
+    echo "  ./start.sh"
+    echo ""
+    echo "To reinstall (fresh venv):"
+    echo "  rm -rf venv && ./install.sh"
+    exit 0
+fi
+
+# Parse --yes flag
+AUTO_YES=false
+for arg in "$@"; do
+    if [ "$arg" = "--yes" ] || [ "$arg" = "-y" ]; then
+        AUTO_YES=true
+    fi
+done
+
+echo "========================================"
+echo "  lunch-model deployment helper"
+echo "========================================"
+echo ""
+echo "Detected files:"
+echo "  - $(ls *.whl 2>/dev/null | head -1)"
+echo "  - install.sh"
+echo "  - start.sh"
+echo ""
+
+if [ "$AUTO_YES" = false ]; then
+    echo "This will:"
+    echo "  1. Create a Python virtual environment (venv/)"
+    echo "  2. Install the wheel package"
+    echo "  3. Install runtime dependencies"
+    echo ""
+    echo "The target device should have Python 3.12+."
+    echo ""
+    read -p "Continue with installation? [Y/n] " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]*$ ]] && [ ! -z "$REPLY" ]; then
+        echo "Aborted."
+        exit 1
+    fi
+fi
+
+echo "Running installation..."
+./install.sh
+
+echo ""
+echo "========================================"
+echo "  Deployment complete!"
+echo "========================================"
+echo ""
+echo "Next: ./start.sh"
+echo ""
+DEPLOY_EOF
+chmod +x dist/bundle/deploy.sh
+
 # Copy wheel to bundle (MUST happen before tarball creation)
 cp "$WHEEL_FILE" dist/bundle/
 
@@ -190,6 +290,8 @@ echo ""
 echo "To deploy:"
 echo "   1. Copy tarball to target device"
 echo "   2. Extract: tar -xzf lunch-model-$VERSION.tar.gz"
-echo "   3. Run: cd bundle && ./install.sh"
-echo "   4. Run: ./start.sh"
+echo "   3. Enter the bundle: cd bundle/"
+echo "   4. Run deployment: ./deploy.sh"
+echo "      (or: ./deploy.sh --yes to skip prompts)"
+echo "   5. Start servers: ./start.sh"
 echo ""
