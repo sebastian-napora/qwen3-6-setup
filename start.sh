@@ -4,24 +4,32 @@
 #
 # Usage:
 #   ./start.sh          # start vLLM backend, token stats and LiteLLM proxy
-#   ./start.sh backend  # start only vLLM backend (11112)
-#   ./start.sh proxy    # start only LiteLLM proxy (11111)
-#   ./start.sh stats    # start only token stats server (11113)
+#   ./start.sh backend  # start only vLLM backend (11114)
+#   ./start.sh proxy    # start only LiteLLM proxy (11115)
+#   ./start.sh stats    # start only token stats server (11116)
 #
 # Architecture:
-#   Copilot -> LiteLLM (11111) -> vLLM (11112)
-#                              -> Token stats (11113)
+#   Copilot -> LiteLLM (11115) -> vLLM (11114)
+#                              -> Token stats (11116)
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# Detect or create venv
-if [ -d "venv" ]; then
+# Use vllm-metal venv on macOS
+if [ -d "/Users/sna/.venv-vllm-metal/bin/python3" ]; then
+    VENV_PYTHON="/Users/sna/.venv-vllm-metal/bin/python3"
+elif [ -d "venv" ]; then
     VENV_PYTHON="venv/bin/python3"
 else
     VENV_PYTHON="python3"
+fi
+
+# If running from bundle (no .py files here), install the wheel first
+if [ ! -f "$SCRIPT_DIR/qwen3_6_server.py" ] && [ -f "$SCRIPT_DIR/lunch_model-"*.whl ]; then
+    echo "📦 Installing lunch-model package..."
+    $VENV_PYTHON -m pip install --quiet "$SCRIPT_DIR"/lunch_model-*.whl
 fi
 
 # Entry point commands (available when package is installed via pip/wheel)
@@ -38,7 +46,7 @@ RUN_STATS="${RUN_STATS:-$SCRIPT_DIR/qwen_token_stats_server.py}"
 mkdir -p logs
 
 start_backend() {
-    echo "🚀 Starting vLLM backend (port 11112)..."
+    echo "🚀 Starting vLLM backend (port 11114)..."
     if [[ -x "$RUN_SERVER" ]] && [[ ! "$RUN_SERVER" == *.py ]]; then
         $RUN_SERVER &
     else
@@ -61,7 +69,7 @@ print(sid, end='')
 }
 
 start_stats() {
-    echo "🚀 Starting token stats server (port 11113)..."
+    echo "🚀 Starting token stats server (port 11116)..."
     if [[ -x "$RUN_STATS" ]] && [[ ! "$RUN_STATS" == *.py ]]; then
         $RUN_STATS &
     else
@@ -71,7 +79,7 @@ start_stats() {
 }
 
 start_proxy() {
-    echo "🚀 Starting LiteLLM proxy (port 11111)..."
+    echo "🚀 Starting LiteLLM proxy (port 11115)..."
     if [[ -x "$RUN_PROXY" ]] && [[ ! "$RUN_PROXY" == *.py ]]; then
         $RUN_PROXY &
     else
@@ -91,13 +99,13 @@ case "${1:-both}" in
         start_proxy
         echo ""
         echo "✅ All services started:"
-        echo "   vLLM backend:   http://0.0.0.0:11112"
-        echo "   LiteLLM proxy:  http://0.0.0.0:11111"
-        echo "   Token stats:    http://0.0.0.0:11113"
+        echo "   vLLM backend:   http://0.0.0.0:11114"
+        echo "   LiteLLM proxy:  http://0.0.0.0:11115"
+        echo "   Token stats:    http://0.0.0.0:11116"
         echo ""
         echo "Test with:"
-        echo "  curl http://localhost:11112/health"
-        echo "  curl http://localhost:11111/health"
+        echo "  curl http://localhost:11114/health"
+        echo "  curl http://localhost:11115/health"
         ;;
     backend)
         start_backend

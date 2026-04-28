@@ -69,7 +69,7 @@ _ch = logging.StreamHandler(sys.stdout)
 _ch.setFormatter(logging.Formatter("%(message)s"))
 _proxy_logger.addHandler(_ch)
 
-LITELLM_PORT = os.environ.get("LITE_LLM_PROXY_PORT", "11111")
+LITELLM_PORT = os.environ.get("LITE_LLM_PROXY_PORT", "11115")
 LITELLM_HOST = os.environ.get("LITE_LLM_PROXY_HOST", "0.0.0.0")
 CONFIG_PATH = Path(__file__).parent / "lite_llm_config.yaml"
 LOG_DIR = Path(__file__).parent / "logs"

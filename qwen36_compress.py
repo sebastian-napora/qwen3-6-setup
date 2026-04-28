@@ -48,7 +48,7 @@ from litellm.integrations.custom_logger import CustomLogger
 
 # Log forwarding — send LiteLLM callback logs to the vLLM backend's /log endpoint
 _COMPRESS_LOG_ENDPOINT = os.environ.get(
-    "LITE_LLM_LOG_ENDPOINT", "http://localhost:11112/log"
+    "LITE_LLM_LOG_ENDPOINT", "http://localhost:11114/log"
 )
 
 
@@ -94,7 +94,7 @@ COMPRESS_TARGET_TOKENS: int = int(
     os.environ.get("LITE_LLM_COMPRESS_TARGET_TOKENS", "16384")
 )
 COMPRESS_ENDPOINT: str = os.environ.get(
-    "LITE_LLM_COMPRESS_ENDPOINT", "http://localhost:11112/compress"
+    "LITE_LLM_COMPRESS_ENDPOINT", "http://localhost:11114/compress"
 )
 COMPRESSED_MODELS: set[str] = set(
     m.strip()
@@ -122,7 +122,7 @@ def _token_encode(text: str) -> list[int]:
         try:
             from transformers import AutoTokenizer
             _CACHED_TOKENIZER = AutoTokenizer.from_pretrained(
-                "RedHatAI/Qwen3.6-35B-A3B-NVFP4",
+                "mlx-community/Qwen3.6-35B-A3B-4bit",
                 use_fast=True,
                 trust_remote_code=True,
             )
@@ -916,7 +916,7 @@ class TodoApprovalPromptCallback(CustomLogger):
             try:
                 from transformers import AutoTokenizer
                 _CACHED_TOKENIZER = AutoTokenizer.from_pretrained(
-                    "RedHatAI/Qwen3.6-35B-A3B-NVFP4",
+                    "mlx-community/Qwen3.6-35B-A3B-4bit",
                     use_fast=True,
                     trust_remote_code=True,
                 )

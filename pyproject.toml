@@ -19,7 +19,7 @@ dev = [
     "pyinstaller>=6.0",
 ]
 runtime = [
-    "vllm>=0.8",
+    "vllm-mlx>=0.2",
     "fastapi>=0.115",
     "uvicorn>=0.34",
 ]

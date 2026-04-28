@@ -1,6 +1,6 @@
 # Qwen3.6-35B-NVFP4 vLLM Backend
 
-This is the **vLLM backend** for `RedHatAI/Qwen3.6-35B-A3B-NVFP4`. It serves the model on port `11112` with an LLM-powered `/compress` endpoint.
+This is the **vLLM backend** for `mlx-community/Qwen3.6-35B-A3B-4bit`. It serves the model on port `11112` with an LLM-powered `/compress` endpoint.
 
 **This server is not called directly by clients.** It is started manually (see Quick Start) and sits behind the LiteLLM proxy which VS Code Copilot talks to.
 
@@ -61,7 +61,7 @@ python3 qwen3-6-server.py
 
 ```bash
 python3 qwen3-6-server.py \
-  --model RedHatAI/Qwen3.6-35B-A3B-NVFP4 \
+  --model mlx-community/Qwen3.6-35B-A3B-4bit \
   --port 11112 \
   --host 0.0.0.0 \
   --gpu-memory-utilization 0.92 \

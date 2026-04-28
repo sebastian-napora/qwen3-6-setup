@@ -30,7 +30,7 @@ from fastapi import FastAPI, Query
 from fastapi.responses import HTMLResponse
 import uvicorn
 
-STATS_PORT = int(os.environ.get("QWEN_STATS_PORT", "11113"))
+STATS_PORT = int(os.environ.get("QWEN_STATS_PORT", "11116"))
 STATS_HOST = os.environ.get("QWEN_STATS_HOST", "0.0.0.0")
 DB_PATH = tracker.DB_PATH
 

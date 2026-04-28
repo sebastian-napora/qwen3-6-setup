@@ -43,9 +43,9 @@ if [ -z "$WHEEL_FILE" ]; then
 fi
 echo "   Built: $WHEEL_FILE"
 
-# Copy config files into dist/bundle/
+# Copy config files and Python sources into dist/bundle/
 echo ""
-echo "[3/4] Copying config files..."
+echo "[3/4] Copying config files and Python sources..."
 cp lite_llm_config.yaml dist/bundle/ 2>/dev/null || true
 cp start.sh dist/bundle/ 2>/dev/null || true
 cp kill.sh dist/bundle/ 2>/dev/null || true
@@ -53,6 +53,15 @@ cp readm.md dist/bundle/ 2>/dev/null || true
 cp build.md dist/bundle/ 2>/dev/null || true
 cp run-build.md dist/bundle/ 2>/dev/null || true
 mkdir -p dist/bundle/scripts
+
+# Copy Python source files for standalone / dev-mode execution
+cp qwen3_6_server.py dist/bundle/ 2>/dev/null || true
+cp server_compress.py dist/bundle/ 2>/dev/null || true
+cp qwen_token_stats_server.py dist/bundle/ 2>/dev/null || true
+cp qwen_token_tracker.py dist/bundle/ 2>/dev/null || true
+cp qwen36_compress.py dist/bundle/ 2>/dev/null || true
+cp qwen_compress.py dist/bundle/ 2>/dev/null || true
+cp __init__.py dist/bundle/ 2>/dev/null || true
 
 # Create install.sh (will be copied to bundle)
 cat > dist/bundle/install.sh << 'INSTALL_EOF'
@@ -91,10 +100,18 @@ fi
 if [ ! -d "venv" ]; then
     echo ""
     echo "Creating Python virtual environment..."
-    python3 -m venv venv
+    # Use --without-pip for macOS/Homebrew where ensurepip is missing;
+    # pip is installed manually afterward.
+    python3 -m venv --without-pip venv
 fi
 
 VENV_PYTHON="venv/bin/python3"
+
+# Bootstrap pip if missing (Homebrew Python workaround)
+if [ ! -f "venv/bin/pip" ] && [ ! -f "venv/bin/pip3" ]; then
+    echo "Installing pip..."
+    curl -sS https://bootstrap.pypa.io/get-pip.py | $VENV_PYTHON
+fi
 
 # Upgrade pip
 echo ""
@@ -117,7 +134,10 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
     echo "   vllm will need to be installed manually or via Docker"
     echo ""
     echo "   Option 1: Use Docker"
-    echo "     docker run -p 11112:8000 vllm/vllm-openai:latest"
+    echo "     docker run -d --gpus all -p 11114:8000 \"
+    echo "       -v ~/.cache/huggingflow:/root/.cache/huggingflow \"
+    echo "       vllm/vllm-openai:latest"
+    echo "       --model Qwen/Qwen3-35B-A3B-NVFP4-TTS"
     echo ""
     echo "   Option 2: Pre-install vllm (see run-build.md)"
 fi
@@ -129,11 +149,12 @@ echo "Installing runtime dependencies..."
 if [[ "$OSTYPE" == "linux-gnu"* ]]; then
     # Linux: install vllm from vllm.ai wheels (pre-built, no source build needed)
     $VENV_PYTHON -m pip install --extra-index-url https://wheels.vllm.ai/latest vllm
-    $VENV_PYTHON -m pip install litellm fastapi uvicorn aiohttp
+    $VENV_PYTHON -m pip install litellm fastapi uvicorn aiohttp uvloop websockets backoff python-multipart orjson apscheduler pydantic-settings pyjwt cryptography boto3 "email-validator[pyyaml]" fastapi-sso
 else
     # macOS / other: skip vllm (requires Linux), install only what's available
     echo "   Skipping vllm (requires Linux)"
-    $VENV_PYTHON -m pip install litellm fastapi uvicorn aiohttp
+    echo "   For vLLM on macOS: use Docker (see Docker section below)"
+    $VENV_PYTHON -m pip install litellm fastapi uvicorn aiohttp uvloop websockets backoff python-multipart orjson apscheduler pydantic-settings pyjwt cryptography boto3 "email-validator[pyyaml]" fastapi-sso
 fi
 
 echo ""
