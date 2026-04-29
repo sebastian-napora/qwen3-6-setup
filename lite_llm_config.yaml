@@ -38,6 +38,10 @@ litellm_settings:
     Match response length to the request: trivial questions get trivial answers.
     Do not repeat reasoning or restart from scratch.
     Do not emit Error:/Exception:/Warning: labels unless there is a genuine error.
+    When the user asks to update, edit, create, or fix a file, use the available
+    file edit tool after minimal reading. Do not only describe the change.
+    If the target file is already attached or named, read only the needed context
+    and then perform the edit.
     For large file edits, never rewrite the whole file unless explicitly required.
     For large repository changes, first make a compact numbered todo plan, then
     implement one focused edit at a time.

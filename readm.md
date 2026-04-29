@@ -1,8 +1,13 @@
-# Qwen3.6-35B-NVFP4 vLLM Backend
+# Qwen3.6 MLX vLLM Backend
 
-This is the **vLLM backend** for `mlx-community/Qwen3.6-35B-A3B-4bit`. It serves the model on port `11112` with an LLM-powered `/compress` endpoint.
+This project serves **Qwen3.6** models on Apple Silicon via vLLM-MLX, with an LLM-powered `/compress` endpoint. Two model profiles are supported:
 
-**This server is not called directly by clients.** It is started manually (see Quick Start) and sits behind the LiteLLM proxy which VS Code Copilot talks to.
+| Model | Hugging Face | Port | Config |
+|---|---|---|---|
+| **Qwen3.6-35B-A3B-4bit** (MoE) | `mlx-community/Qwen3.6-35B-A3B-4bit` | 11114 (backend) / 11115 (proxy) | `lite_llm_config.yaml` |
+| **Qwen3.6-27B-4bit** | `mlx-community/Qwen3.6-27B-4bit` | 11124 (backend) / 11125 (proxy) | `lite_llm_config_27b.yaml` |
+
+**These servers are not called directly by clients.** They are started manually (see Quick Start) and sit behind the LiteLLM proxy which VS Code Copilot talks to.
 
 ---
 
@@ -40,29 +45,68 @@ repetition_penalty: 1.05 | presence_penalty: 0 | frequency_penalty: 0
 ## Architecture
 
 ```
-Copilot → LiteLLM (11111) → vLLM qwen3.6 (11112)
-                                   ↑
-                            /compress @ 11112
+Copilot → LiteLLM Proxy → vLLM MLX Backend
+              ↑                ↑
+   Compression callbacks    /compress endpoint
 ```
+
+Two independent serving stacks run side by side:
+
+```
+Stack 35B (default):  Copilot → LiteLLM (11115) → vLLM MLX (11114)
+Stack 27B:           Copilot → LiteLLM (11125) → vLLM MLX (11124)
+```
+
+### Ports
+
+| Service | 35B-A3B | 27B |
+|---|---|---|
+| vLLM MLX backend | 11114 | 11124 |
+| LiteLLM proxy | 11115 | 11125 |
+| Token stats | 11116 | 11126 |
 
 ## Quick Start
 
-```bash
-# Option A: via LiteLLM proxy (recommended)
-cd /home/sna/ai-projects/lite-llm
-uv run main.py comstart       # starts vLLM (11112) + LiteLLM proxy with compression (11111)
+### Setup (one-time)
 
-# Option B: standalone (for testing /compress directly)
-cd /home/sna/ai-projects/lunch-model
-python3 qwen3-6-server.py
+```bash
+# 35B-A3B model
+./setup-mlx.sh
+
+# 27B model (separate env, logs, and PID files)
+./setup-mlx-27b.sh
+```
+
+### Start a model
+
+```bash
+# 35B-A3B (default)
+./mlx-start.sh          # start all (backend + stats + proxy)
+./mlx-start.sh backend  # backend only
+./mlx-start.sh proxy    # proxy only
+./mlx-start.sh stop     # stop all
+
+# 27B
+./mlx-start-27b.sh      # start all
+./mlx-start-27b.sh stop # stop all
+```
+
+### LiteLLM proxy (with compression)
+
+```bash
+# From a separate lite-llm project directory:
+cd /home/sna/ai-projects/lite-llm
+uv run main.py comstart       # starts vLLM + LiteLLM proxy with compression
 ```
 
 ## Standalone Server Flags
 
+### 35B-A3B
+
 ```bash
 python3 qwen3-6-server.py \
   --model mlx-community/Qwen3.6-35B-A3B-4bit \
-  --port 11112 \
+  --port 11114 \
   --host 0.0.0.0 \
   --gpu-memory-utilization 0.92 \
   --max-model-len 262144 \
@@ -71,6 +115,20 @@ python3 qwen3-6-server.py \
   --enable-auto-tool-choice \
   --quantization fp4
 ```
+
+### 27B
+
+```bash
+python3 qwen3-6-server.py \
+  --model mlx-community/Qwen3.6-27B-4bit \
+  --port 11124 \
+  --host 0.0.0.0 \
+  --gpu-memory-utilization 0.92 \
+  --max-model-len 20000 \
+  --quantization fp4
+```
+
+> **Note:** The 27B model runs with `enable_thinking: false` in its LiteLLM config (no reasoning parser).
 
 ## Endpoints
 
