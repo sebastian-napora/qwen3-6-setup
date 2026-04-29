@@ -5,4 +5,11 @@ dist
 qwen_server.egg-info
 .xtread
 __pycache__
-/logs
+logs
+
+venv-fallback
+venvs
+.mlx.env
+.mlx-*.env
+lite_llm_config.yaml.bak
+lite_llm_config_*.yaml.bak

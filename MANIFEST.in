@@ -1,0 +1,5 @@
+include *.py
+include *.yaml
+include *.yml
+include *.sh
+include *.md
