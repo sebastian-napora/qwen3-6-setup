@@ -5,6 +5,7 @@ This project serves **Qwen3.6** models on Apple Silicon via vLLM-MLX, with an LL
 | Model | Hugging Face | Port | Config |
 |---|---|---|---|
 | **Qwen3.6-35B-A3B-4bit** (MoE) | `mlx-community/Qwen3.6-35B-A3B-4bit` | 11114 (backend) / 11115 (proxy) | `lite_llm_config.yaml` |
+| **Qwen3.6-35B-A3B-UD-MLX-3bit** (MoE) | `unsloth/Qwen3.6-35B-A3B-UD-MLX-3bit` | 11134 (backend) / 11135 (proxy) | `lite_llm_config_35b_a3b_3bit.yaml` |
 | **Qwen3.6-27B-4bit** | `mlx-community/Qwen3.6-27B-4bit` | 11124 (backend) / 11125 (proxy) | `lite_llm_config_27b.yaml` |
 
 **These servers are not called directly by clients.** They are started manually (see Quick Start) and sit behind the LiteLLM proxy which VS Code Copilot talks to.
@@ -53,17 +54,18 @@ Copilot → LiteLLM Proxy → vLLM MLX Backend
 Two independent serving stacks run side by side:
 
 ```
-Stack 35B (default):  Copilot → LiteLLM (11115) → vLLM MLX (11114)
-Stack 27B:           Copilot → LiteLLM (11125) → vLLM MLX (11124)
+Stack 35B (default):      Copilot → LiteLLM (11115) → vLLM MLX (11114)
+Stack 35B-A3B-3bit:       Copilot → LiteLLM (11135) → vLLM MLX (11134)
+Stack 27B:                Copilot → LiteLLM (11125) → vLLM MLX (11124)
 ```
 
 ### Ports
 
-| Service | 35B-A3B | 27B |
-|---|---|---|
-| vLLM MLX backend | 11114 | 11124 |
-| LiteLLM proxy | 11115 | 11125 |
-| Token stats | 11116 | 11126 |
+| Service | 35B-A3B | 35B-A3B-3bit | 27B |
+|---|---|---|---|
+| vLLM MLX backend | 11114 | 11134 | 11124 |
+| LiteLLM proxy | 11115 | 11135 | 11125 |
+| Token stats | 11116 | 11136 | 11126 |
 
 ## Quick Start
 
@@ -72,6 +74,9 @@ Stack 27B:           Copilot → LiteLLM (11125) → vLLM MLX (11124)
 ```bash
 # 35B-A3B model
 ./setup-mlx.sh
+
+# 35B-A3B-UD-MLX-3bit (unsloth variant)
+./setup-mlx-35b-a3b-3bit.sh
 
 # 27B model (separate env, logs, and PID files)
 ./setup-mlx-27b.sh
@@ -85,6 +90,10 @@ Stack 27B:           Copilot → LiteLLM (11125) → vLLM MLX (11124)
 ./mlx-start.sh backend  # backend only
 ./mlx-start.sh proxy    # proxy only
 ./mlx-start.sh stop     # stop all
+
+# 35B-A3B-UD-MLX-3bit (unsloth variant)
+./mlx-start-35b-a3b-3bit.sh      # start all
+./mlx-start-35b-a3b-3bit.sh stop # stop all
 
 # 27B
 ./mlx-start-27b.sh      # start all
