@@ -31,7 +31,9 @@ from litellm.integrations.custom_logger import CustomLogger
 
 logger = logging.getLogger("qwen_token_tracker")
 
-DB_PATH = Path(__file__).parent / "logs" / "token_stats.db"
+ROOT_DIR = Path(__file__).resolve().parent.parent
+LOG_DIR = Path(os.environ.get("QWEN_LOG_DIR", ROOT_DIR / "logs")).expanduser()
+DB_PATH = LOG_DIR / "token_stats.db"
 
 
 SESSION_FILE = DB_PATH.parent / ".token_session"

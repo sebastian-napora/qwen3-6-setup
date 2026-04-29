@@ -22,35 +22,39 @@ from pathlib import Path
 import sys
 import litellm
 
-# import qwen_compress       # noqa: F401 — strips thinking tokens from history
+from src import qwen_compress  # noqa: F401 — strips thinking tokens from history
 from src import qwen_token_tracker  # noqa: F401 — records per-request token usage
-# qwen_compress.register()
+qwen_compress.register()
 qwen_token_tracker.register()
 
+ROOT_DIR = Path(__file__).resolve().parent.parent
+
 # Setup detailed logging
-LOG_DIR = os.path.join(os.path.dirname(__file__), "logs")
-os.makedirs(LOG_DIR, exist_ok=True)
+LOG_DIR = Path(os.environ.get("QWEN_LOG_DIR", ROOT_DIR / "logs")).expanduser()
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+LOG_LEVEL_NAME = os.environ.get("LITELLM_LOG_LEVEL", "INFO").upper()
+LOG_LEVEL = getattr(logging, LOG_LEVEL_NAME, logging.INFO)
 
 litellm_logger = logging.getLogger("litellm.image_request")
-litellm_logger.setLevel(logging.DEBUG)
+litellm_logger.setLevel(LOG_LEVEL)
 fh = logging.FileHandler(os.path.join(LOG_DIR, "litellm_image_requests.log"))
-fh.setLevel(logging.DEBUG)
+fh.setLevel(LOG_LEVEL)
 fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)-8s %(message)s"))
 litellm_logger.addHandler(fh)
 
 ch = logging.StreamHandler()
-ch.setLevel(logging.DEBUG)
+ch.setLevel(LOG_LEVEL)
 ch.setFormatter(logging.Formatter("%(asctime)s %(name)-25s %(levelname)-8s %(message)s"))
 litellm_logger.addHandler(ch)
 
 litellm_logger.info("=" * 60)
 litellm_logger.info("LiteLLM Qwen3.6-35B-A3B Proxy Started")
 
-os.environ["LITELLM_LOG"] = "DEBUG"
-os.environ["LITELLM_REQUEST_LOGGING"] = "true"
+os.environ.setdefault("LITELLM_LOG", LOG_LEVEL_NAME)
+os.environ.setdefault("LITELLM_REQUEST_LOGGING", "false")
 
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=LOG_LEVEL,
     format="%(asctime)s %(name)-25s %(levelname)-8s %(message)s",
     handlers=[
         logging.FileHandler(os.path.join(LOG_DIR, "litellm_detailed.log")),
@@ -59,7 +63,7 @@ logging.basicConfig(
 )
 
 litellm_main_logger = logging.getLogger("litellm")
-litellm_main_logger.setLevel(logging.DEBUG)
+litellm_main_logger.setLevel(LOG_LEVEL)
 
 logger = logging.getLogger("server_compress")
 _proxy_logger = logging.getLogger("proxy_io")
@@ -71,9 +75,10 @@ _proxy_logger.addHandler(_ch)
 
 LITELLM_PORT = os.environ.get("LITE_LLM_PROXY_PORT", "11115")
 LITELLM_HOST = os.environ.get("LITE_LLM_PROXY_HOST", "0.0.0.0")
-CONFIG_PATH = Path(__file__).parent / "lite_llm_config.yaml"
-LOG_DIR = Path(__file__).parent / "logs"
-LOG_DIR.mkdir(exist_ok=True)
+CONFIG_PATH = Path(
+    os.environ.get("CONFIG_FILE_PATH", ROOT_DIR / "lite_llm_config.yaml")
+).expanduser()
+LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 logger.info("Starting LiteLLM proxy on %s:%s", LITELLM_HOST, LITELLM_PORT)
 logger.info("Config: %s", CONFIG_PATH)
@@ -95,10 +100,9 @@ def main():
         host=LITELLM_HOST,
         port=int(LITELLM_PORT),
         reload=False,
-        log_level="debug",
+        log_level=os.environ.get("UVICORN_LOG_LEVEL", "info").lower(),
     )
 
 
 if __name__ == "__main__":
     main()
-

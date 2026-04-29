@@ -11,6 +11,7 @@ Intercepts requests before they are forwarded to the LLM and:
 
 import json
 import logging
+import os
 import re
 from pathlib import Path
 from typing import Any, Optional, Union
@@ -37,6 +38,7 @@ CONTEXT_LIMIT_TOKENS = 256_000
 CONTEXT_TRIM_BUFFER = 3_000
 _CHARS_PER_TOKEN = 2.5
 _DEFAULT_MAX_OUTPUT_TOKENS = 4_096
+_COPILOT_MIN_OUTPUT_TOKENS = int(os.environ.get("QWEN_COPILOT_MIN_OUTPUT_TOKENS", "20000"))
 _OVERFLOW_SESSION_PATH = Path(__file__).parent / "logs" / "last_session.json"
 
 
@@ -381,6 +383,16 @@ class QwenHistorySanitizer(CustomLogger):
             if tools_changed:
                 data = {**data, "tools": compressed_tools}
                 tools = compressed_tools
+
+        if _COPILOT_MIN_OUTPUT_TOKENS > 0 and (tools or data.get("stream")):
+            requested_max = int(data.get("max_tokens") or _DEFAULT_MAX_OUTPUT_TOKENS)
+            if requested_max < _COPILOT_MIN_OUTPUT_TOKENS:
+                data = {**data, "max_tokens": _COPILOT_MIN_OUTPUT_TOKENS}
+                changed = True
+                logger.info(
+                    "Raised streaming/tool max_tokens from %d to %d",
+                    requested_max, _COPILOT_MIN_OUTPUT_TOKENS,
+                )
 
         tools_tokens = _tools_token_estimate(tools)
         max_output = int(data.get("max_tokens") or _DEFAULT_MAX_OUTPUT_TOKENS)

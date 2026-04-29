@@ -11,7 +11,7 @@ pkill -f "qwen_token_stats_server" 2>/dev/null
 pkill -9 -f "VLLM::EngineCore" 2>/dev/null
 
 # Kill any processes on our ports using lsof (macOS-compatible)
-for port in 11114 11115 11116; do
+for port in 11114 11115 11116 11124 11125 11126 11134 11135 11136; do
     pids=$(lsof -ti :$port 2>/dev/null)
     if [ -n "$pids" ]; then
         echo "Killing processes on port $port: $pids"
@@ -24,7 +24,7 @@ echo "✅ Qwen serving processes killed"
 # Verify ports are free
 if [ "$(uname)" = "Darwin" ]; then
     # macOS: use lsof
-    for port in 11114 11115 11116; do
+    for port in 11114 11115 11116 11124 11125 11126 11134 11135 11136; do
         if lsof -i :$port -t >/dev/null 2>&1; then
             echo "⚠️  Port $port still in use"
         else
@@ -33,7 +33,7 @@ if [ "$(uname)" = "Darwin" ]; then
     done
 else
     # Linux: use ss
-    ss -tlnp 2>/dev/null | grep -E '11114|11115|11116' || echo "  (ports are free)"
+    ss -tlnp 2>/dev/null | grep -E '11114|11115|11116|11124|11125|11126|11134|11135|11136' || echo "  (ports are free)"
 fi
 
 ps aux | grep -E 'qwen3_6|server_compress|qwen_token|qwen_litellm' | grep -v grep | grep -v pkill || echo "  (no remaining processes)"
