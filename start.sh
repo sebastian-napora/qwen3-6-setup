@@ -17,6 +17,14 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# Auto-cleanup any prior run so port-in-use errors don't recur.
+# Skip with: SKIP_CLEAN=1 ./start.sh
+if [[ "${SKIP_CLEAN:-0}" != "1" && -x "$SCRIPT_DIR/kill.sh" ]]; then
+    echo "🧹 Cleaning up any prior serving processes..."
+    bash "$SCRIPT_DIR/kill.sh" >/dev/null 2>&1 || true
+    sleep 1
+fi
+
 # Detect or create venv
 if [ -d "venv" ]; then
     VENV_PYTHON="venv/bin/python3"

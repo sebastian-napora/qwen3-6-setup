@@ -122,7 +122,7 @@ async def main():
         "--trust-remote-code",
         "--dtype", "bfloat16",
         "--max-model-len", "262144",           # full native 256K context
-        "--gpu-memory-utilization", "0.30",    # ~70 GB of 128 GB unified; leaves ~58 GB for Grace CPU/OS
+        "--gpu-memory-utilization", "0.33",    # ~42 GB of 128 GB unified; +3% over text-only to fit vision encoder + KV cache at 256K
         "--kv-cache-dtype", "fp8_e4m3",        # halves KV cache VRAM vs bfloat16
         "--max-num-seqs", "1",                 # single user/session — no concurrency needed
         "--max-num-batched-tokens", "32768",   # large chunks = faster prefill for long Copilot contexts
