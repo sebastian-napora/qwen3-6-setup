@@ -11,6 +11,7 @@
 # Architecture:
 #   Copilot -> LiteLLM (11111) -> vLLM (11112)
 #                              -> Token stats (11113)
+#   Local RAG + embeddings are mounted on the LiteLLM proxy (11111).
 
 set -e
 
@@ -80,12 +81,15 @@ start_stats() {
 
 start_proxy() {
     echo "🚀 Starting LiteLLM proxy (port 11111)..."
+    echo "Embedding model: ${QWEN_RAG_EMBED_MODEL:-mlx-community/Qwen3-Embedding-8B-4bit-DWQ}"
+    echo "Embedding backend: ${QWEN_RAG_EMBED_BACKEND:-auto}"
     if [[ -x "$RUN_PROXY" ]] && [[ ! "$RUN_PROXY" == *.py ]]; then
         $RUN_PROXY &
     else
         $VENV_PYTHON "$RUN_PROXY" &
     fi
     echo "Proxy PID: $!"
+    echo "Local RAG / embeddings: http://0.0.0.0:${LITE_LLM_PROXY_PORT:-11111}/v1/local_rag/health"
 }
 
 case "${1:-both}" in
@@ -101,11 +105,13 @@ case "${1:-both}" in
         echo "✅ All services started:"
         echo "   vLLM backend:   http://0.0.0.0:11112"
         echo "   LiteLLM proxy:  http://0.0.0.0:11111"
+        echo "   Local RAG:      http://0.0.0.0:11111/v1/local_rag/health"
         echo "   Token stats:    http://0.0.0.0:11113"
         echo ""
         echo "Test with:"
         echo "  curl http://localhost:11112/health"
         echo "  curl http://localhost:11111/health"
+        echo "  curl http://localhost:11111/v1/local_rag/health"
         ;;
     backend)
         start_backend

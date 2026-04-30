@@ -21,6 +21,7 @@ import time
 from pathlib import Path
 import sys
 import litellm
+import qwen_local_rag
 
 # import qwen_compress       # noqa: F401 — strips thinking tokens from history
 import qwen_token_tracker  # noqa: F401 — records per-request token usage
@@ -91,8 +92,9 @@ for cb in registered_callbacks:
 def main():
     """Console-script entry point for `qwen-compress`."""
     import uvicorn
+    app = qwen_local_rag.install_on_litellm_proxy()
     uvicorn.run(
-        "litellm.proxy.proxy_server:app",
+        app,
         host=LITELLM_HOST,
         port=int(LITELLM_PORT),
         reload=False,

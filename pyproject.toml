@@ -11,6 +11,10 @@ requires-python = ">=3.12"
 dependencies = [
     "litellm>=1.0",
     "aiohttp>=3.9",
+    "huggingface-hub>=0.30",
+    "mlx-embeddings>=0.1.0",
+    "numpy>=1.26",
+    "pypdf>=4.0",
     "uvloop>=0.19",
 ]
 
@@ -23,6 +27,11 @@ runtime = [
     "vllm>=0.8",
     "fastapi>=0.115",
     "uvicorn>=0.34",
+]
+hf-embeddings = [
+    "accelerate>=1.6",
+    "torch>=2.6",
+    "transformers>=4.51",
 ]
 
 [project.scripts]
@@ -39,12 +48,21 @@ py-modules = [
     "qwen_token_tracker",
     "qwen_compress",
     "qwen36_compress",
+    "qwen_local_rag",
     "request_logging",
 ]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["qwen3_6_server*", "qwen3-6-server*", "server_compress*", "qwen36_compress*", "qwen_compress*", "qwen_token*"]
+include = [
+    "qwen3_6_server*",
+    "qwen3-6-server*",
+    "server_compress*",
+    "qwen36_compress*",
+    "qwen_compress*",
+    "qwen_token*",
+    "qwen_local_rag*",
+]
 namespaces = false
 
 [tool.pytest.ini_options]

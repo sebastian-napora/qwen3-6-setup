@@ -80,6 +80,99 @@ python3 qwen3-6-server.py \
 | `/health` | GET | Health check |
 | `/compress` | POST | LLM-powered context compression |
 | `/compress/stream` | POST | Streaming compression |
+| `/v1/local/embeddings` | POST | Local Qwen3 embedding endpoint |
+| `/v1/local_rag/ingest` | POST | Ingest local documents into SQLite vector storage |
+| `/v1/local_rag/search` | POST | Search ingested local document chunks |
+| `/v1/local_rag/query` | POST | Retrieve chunks and answer with Qwen via LiteLLM |
+
+## Local RAG
+
+The LiteLLM proxy installs local RAG endpoints on port `11111`. Embeddings are
+generated with MLX and default to:
+
+```
+mlx-community/Qwen3-Embedding-8B-4bit-DWQ
+```
+
+The embedding model is loaded lazily on the first embedding, ingest, search, or
+query request. If the model is not cached yet, the first request downloads it
+from Hugging Face.
+
+Embedding model choices:
+
+| Preset | Model | Backend | Good for |
+|---|---|---|---|
+| `mlx-8b` | `mlx-community/Qwen3-Embedding-8B-4bit-DWQ` | `mlx` | Apple Silicon / Metal |
+| `unsloth-4b` | `unsloth/Qwen3-Embedding-4B` | `hf` | DGX Spark / NVIDIA |
+| `qwen-4b` | `Qwen/Qwen3-Embedding-4B` | `hf` | DGX Spark / NVIDIA |
+| `qwen-0.6b` | `Qwen/Qwen3-Embedding-0.6B` | `hf` | smaller CPU/GPU tests |
+
+To pre-download it during machine setup:
+
+```bash
+./download_embedding_model.sh
+```
+
+To also verify the selected local embedding backend can execute the model:
+
+```bash
+./download_embedding_model.sh --verify
+```
+
+For DGX Spark / NVIDIA, install the Torch/Transformers embedding backend and
+select the Unsloth 4B model:
+
+```bash
+./install.sh --hf-embeddings
+./download_embedding_model.sh --preset unsloth-4b --verify
+QWEN_RAG_EMBED_MODEL=unsloth/Qwen3-Embedding-4B ./start.sh proxy
+```
+
+You can also select it per request:
+
+```json
+{
+  "embedding_model": "unsloth/Qwen3-Embedding-4B",
+  "embedding_backend": "hf"
+}
+```
+
+By default path ingestion is limited to `./documents` for safety because the
+proxy binds to `0.0.0.0`. Override with:
+
+```bash
+export QWEN_RAG_DOCUMENT_ROOT=/path/to/documents
+# or, only on trusted machines:
+export QWEN_RAG_ALLOW_OUTSIDE_ROOT=1
+```
+
+Ingest a folder:
+
+```bash
+curl -X POST http://localhost:11111/v1/local_rag/ingest \
+  -H 'Content-Type: application/json' \
+  -d '{"path": ".", "collection": "default"}'
+```
+
+Search:
+
+```bash
+curl -X POST http://localhost:11111/v1/local_rag/search \
+  -H 'Content-Type: application/json' \
+  -d '{"query": "What does this project expose?", "collection": "default", "top_k": 5}'
+```
+
+Ask with retrieved context:
+
+```bash
+curl -X POST http://localhost:11111/v1/local_rag/query \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "qwen3.6-35b-nvfp4",
+    "collection": "default",
+    "messages": [{"role": "user", "content": "What endpoints are available?"}]
+  }'
+```
 
 ## /compress
 

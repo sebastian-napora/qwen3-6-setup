@@ -6,3 +6,5 @@ qwen_server.egg-info
 .xtread
 __pycache__
 logs
+rag_data
+documents

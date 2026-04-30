@@ -6,13 +6,14 @@
 #   1. Verifies a usable Python interpreter (>= 3.12).
 #   2. Creates ./venv if missing.
 #   3. Upgrades pip / setuptools / wheel inside the venv.
-#   4. Installs this project editable, with [runtime] extras
-#      (vllm, fastapi, uvicorn) and uvloop.
+#   4. Installs this project editable, with local RAG dependencies and optional
+#      [runtime] extras (vllm, fastapi, uvicorn).
 #   5. Prints next-step commands.
 #
 # Usage:
 #   ./install.sh                 # default: full install (runtime + dev extras off)
 #   ./install.sh --no-runtime    # skip vllm/fastapi/uvicorn (proxy-only host)
+#   ./install.sh --hf-embeddings # add Torch/Transformers embedding backend for DGX/NVIDIA
 #   ./install.sh --dev           # also install dev extras (build, pyinstaller)
 #   ./install.sh --recreate      # delete and rebuild ./venv from scratch
 #   ./install.sh --python python3.12  # pin a specific interpreter
@@ -26,12 +27,15 @@ cd "$SCRIPT_DIR"
 PYTHON_BIN=""
 INSTALL_RUNTIME=1
 INSTALL_DEV=0
+INSTALL_HF_EMBEDDINGS=0
 RECREATE=0
 
 # ── Argument parsing ──────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --no-runtime)  INSTALL_RUNTIME=0; shift ;;
+        --hf-embeddings|--dgx-embeddings)
+                       INSTALL_HF_EMBEDDINGS=1; shift ;;
         --dev)         INSTALL_DEV=1;     shift ;;
         --recreate)    RECREATE=1;        shift ;;
         --python)      PYTHON_BIN="$2";   shift 2 ;;
@@ -95,6 +99,7 @@ python -m pip install --upgrade pip setuptools wheel
 EXTRAS=()
 [[ "$INSTALL_RUNTIME" -eq 1 ]] && EXTRAS+=("runtime")
 [[ "$INSTALL_DEV"     -eq 1 ]] && EXTRAS+=("dev")
+[[ "$INSTALL_HF_EMBEDDINGS" -eq 1 ]] && EXTRAS+=("hf-embeddings")
 
 if [[ "${#EXTRAS[@]}" -gt 0 ]]; then
     EXTRA_SPEC="[$(IFS=,; echo "${EXTRAS[*]}")]"
@@ -116,17 +121,41 @@ for cmd in qwen-server qwen-compress qwen-stats; do
 done
 
 echo "🔎 Verifying module imports"
-python - <<'PY'
-import importlib, sys
-mods = ["qwen3_6_server", "server_compress", "qwen_token_stats_server", "uvloop"]
+CHECK_HF_EMBEDDINGS="$INSTALL_HF_EMBEDDINGS" python - <<'PY'
+import importlib
+import importlib.util
+import os
+import sys
+
+import_mods = [
+    "qwen3_6_server",
+    "server_compress",
+    "qwen_token_stats_server",
+    "qwen_local_rag",
+    "numpy",
+    "pypdf",
+    "uvloop",
+]
+installed_mods = ["mlx_embeddings"]
+if os.environ.get("CHECK_HF_EMBEDDINGS") == "1":
+    installed_mods.extend(["torch", "transformers", "accelerate"])
+
 failed = []
-for m in mods:
+for m in import_mods:
     try:
         importlib.import_module(m)
         print(f"   ✅ {m}")
     except Exception as e:
         failed.append((m, e))
         print(f"   ❌ {m}: {e}")
+
+for m in installed_mods:
+    if importlib.util.find_spec(m) is None:
+        failed.append((m, "not installed"))
+        print(f"   ❌ {m}: not installed")
+    else:
+        print(f"   ✅ {m} installed")
+
 sys.exit(1 if failed else 0)
 PY
 
@@ -143,4 +172,15 @@ Next steps:
 Health checks:
   curl http://localhost:11112/health   # vLLM backend
   curl http://localhost:11111/health   # LiteLLM proxy
+  curl http://localhost:11111/v1/local_rag/health   # local RAG / embeddings
+
+Local RAG:
+  The embedding model is mlx-community/Qwen3-Embedding-8B-4bit-DWQ.
+  It is loaded lazily on first embed, ingest, search, or query request.
+  Pre-download it with: ./download_embedding_model.sh
+
+DGX/NVIDIA embedding option:
+  ./install.sh --hf-embeddings
+  ./download_embedding_model.sh --preset unsloth-4b
+  QWEN_RAG_EMBED_MODEL=unsloth/Qwen3-Embedding-4B ./start.sh proxy
 EOF
