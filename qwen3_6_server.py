@@ -134,7 +134,7 @@ async def main():
         "--reasoning-parser", "qwen3",
         "--enable-auto-tool-choice",
         "--default-chat-template-kwargs", '{"enable_thinking":false}',  # disable thinking by default; clients opt-in via extra_body
-        "--limit-mm-per-prompt", '{"image":0,"video":0,"audio":0}',      # no mm allocation for text-only model
+        "--limit-mm-per-prompt", '{"image":1,"video":0,"audio":0}',      # multimodal: allow 1 image per prompt
         "--port", "11112",
         "--host", "0.0.0.0",
         # ── Sampling defaults (seed is engine-level; rest via --override-generation-config) ─

@@ -1,4 +1,4 @@
 [console_scripts]
-qwen-compress = server_compress:__main__
+qwen-compress = server_compress:main
 qwen-server = qwen3_6_server:run
 qwen-stats = qwen_token_stats_server:main

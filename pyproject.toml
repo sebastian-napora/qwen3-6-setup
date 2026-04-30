@@ -11,6 +11,7 @@ requires-python = ">=3.12"
 dependencies = [
     "litellm>=1.0",
     "aiohttp>=3.9",
+    "uvloop>=0.19",
 ]
 
 [project.optional-dependencies]
@@ -26,11 +27,20 @@ runtime = [
 
 [project.scripts]
 qwen-server = "qwen3_6_server:run"
-qwen-compress = "server_compress:__main__"
+qwen-compress = "server_compress:main"
 qwen-stats = "qwen_token_stats_server:main"
 
 [tool.setuptools]
 package-data = { "*" = ["*.yaml", "*.yml", "*.sh", "*.md"] }
+py-modules = [
+    "qwen3_6_server",
+    "server_compress",
+    "qwen_token_stats_server",
+    "qwen_token_tracker",
+    "qwen_compress",
+    "qwen36_compress",
+    "request_logging",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]

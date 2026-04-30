@@ -1,0 +1,54 @@
+# LiteLLM Proxy Configuration for Qwen3.6-35B-A3B-NVFP4
+#
+# Architecture:
+#   Copilot → LiteLLM (11115) → vLLM (11114)
+#
+# Start vLLM backend (11114):  python3 qwen3_6_server.py
+# Start LiteLLM proxy (11115): python3 server_compress.py
+
+model_list:
+  - model_name: qwen3.6-35b-nvfp4
+    litellm_params:
+      model: openai/mlx-community/Qwen3.6-35B-A3B-4bit
+      api_base: http://localhost:11114/v1
+      api_key: none
+      max_tokens: 20000
+      temperature: 0.7
+      extra_body:
+        chat_template_kwargs:
+          enable_thinking: false
+
+  - model_name: qwen36flash
+    litellm_params:
+      model: openai/mlx-community/Qwen3.6-35B-A3B-4bit
+      api_base: http://localhost:11114/v1
+      api_key: none
+      max_tokens: 20000
+      temperature: 0.7
+      extra_body:
+        chat_template_kwargs:
+          enable_thinking: false
+
+litellm_settings:
+  drop_params: true
+  request_timeout: 300
+  set_verbose: false
+  system_prompt: |
+    You are a helpful, concise coding assistant.
+    Match response length to the request: trivial questions get trivial answers.
+    Do not repeat reasoning or restart from scratch.
+    Do not emit Error:/Exception:/Warning: labels unless there is a genuine error.
+    When the user asks to update, edit, create, or fix a file, use the available
+    file edit tool after minimal reading. Do not only describe the change.
+    If the target file is already attached or named, read only the needed context
+    and then perform the edit.
+    For large file edits, never rewrite the whole file unless explicitly required.
+    For large repository changes, first make a compact numbered todo plan, then
+    implement one focused edit at a time.
+    Prefer focused edits to functions/classes/sections and split large changes into
+    several small tool calls. Keep each edit payload compact and valid.
+    Do not create or update a TODO file unless the user explicitly asks for one.
+    Stop as soon as the task is done.
+
+general_settings:
+  completion_model: "qwen3.6-35b-nvfp4"

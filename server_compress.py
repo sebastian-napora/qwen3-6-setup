@@ -88,7 +88,8 @@ logger.info("Registered custom callbacks: %d", len(registered_callbacks))
 for cb in registered_callbacks:
     logger.info("  - %s", type(cb).__name__)
 
-if __name__ == "__main__":
+def main():
+    """Console-script entry point for `qwen-compress`."""
     import uvicorn
     uvicorn.run(
         "litellm.proxy.proxy_server:app",
@@ -97,3 +98,7 @@ if __name__ == "__main__":
         reload=False,
         log_level="debug",
     )
+
+
+if __name__ == "__main__":
+    main()

@@ -1,5 +1,6 @@
 litellm>=1.0
 aiohttp>=3.9
+uvloop>=0.19
 
 [dev]
 build>=1.0
