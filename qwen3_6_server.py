@@ -122,7 +122,7 @@ async def main():
         "--trust-remote-code",
         "--dtype", "bfloat16",
         "--max-model-len", "262144",           # full native 256K context
-        "--gpu-memory-utilization", "0.78",    # DGX Spark GB10 (128 GB unified): ~100 GB to vLLM, ~28 GB reserved for Grace CPU + OS
+        "--gpu-memory-utilization", "0.58",    # DGX Spark GB10 (128 GB unified): ~100 GB to vLLM, ~28 GB reserved for Grace CPU + OS
         "--kv-cache-dtype", "fp8_e4m3",        # halves KV cache VRAM vs bfloat16
         "--max-num-seqs", "1",                 # single user/session — no concurrency needed
         "--max-num-batched-tokens", "32768",   # large chunks = faster prefill for long Copilot contexts
