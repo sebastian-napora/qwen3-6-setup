@@ -11,9 +11,9 @@
 #   5. Prints next-step commands.
 #
 # Usage:
-#   ./install.sh                 # default: full install (runtime + dev extras off)
+#   ./install.sh                 # default: full install (runtime + HF embeddings)
 #   ./install.sh --no-runtime    # skip vllm/fastapi/uvicorn (proxy-only host)
-#   ./install.sh --hf-embeddings # add Torch/Transformers embedding backend for DGX/NVIDIA
+#   ./install.sh --no-hf-embeddings  # skip Torch/Transformers embedding backend
 #   ./install.sh --dev           # also install dev extras (build, pyinstaller)
 #   ./install.sh --recreate      # delete and rebuild ./venv from scratch
 #   ./install.sh --python python3.12  # pin a specific interpreter
@@ -27,7 +27,7 @@ cd "$SCRIPT_DIR"
 PYTHON_BIN=""
 INSTALL_RUNTIME=1
 INSTALL_DEV=0
-INSTALL_HF_EMBEDDINGS=0
+INSTALL_HF_EMBEDDINGS=1
 RECREATE=0
 
 # ── Argument parsing ──────────────────────────────────────────────────────────
@@ -36,6 +36,8 @@ while [[ $# -gt 0 ]]; do
         --no-runtime)  INSTALL_RUNTIME=0; shift ;;
         --hf-embeddings|--dgx-embeddings)
                        INSTALL_HF_EMBEDDINGS=1; shift ;;
+        --no-hf-embeddings)
+                       INSTALL_HF_EMBEDDINGS=0; shift ;;
         --dev)         INSTALL_DEV=1;     shift ;;
         --recreate)    RECREATE=1;        shift ;;
         --python)      PYTHON_BIN="$2";   shift 2 ;;
@@ -175,12 +177,12 @@ Health checks:
   curl http://localhost:11111/v1/local_rag/health   # local RAG / embeddings
 
 Local RAG:
-  The embedding model is mlx-community/Qwen3-Embedding-8B-4bit-DWQ.
+  The default embedding model is unsloth/Qwen3-Embedding-4B.
   It is loaded lazily on first embed, ingest, search, or query request.
   Pre-download it with: ./download_embedding_model.sh
 
-DGX/NVIDIA embedding option:
-  ./install.sh --hf-embeddings
-  ./download_embedding_model.sh --preset unsloth-4b
-  QWEN_RAG_EMBED_MODEL=unsloth/Qwen3-Embedding-4B ./start.sh proxy
+Apple Silicon MLX embedding option:
+  ./install.sh --no-hf-embeddings
+  ./download_embedding_model.sh --preset mlx-8b
+  ./mlx-start.sh proxy
 EOF

@@ -48,13 +48,44 @@ Copilot → LiteLLM (11111) → vLLM qwen3.6 (11112)
 ## Quick Start
 
 ```bash
-# Option A: via LiteLLM proxy (recommended)
-cd /home/sna/ai-projects/lite-llm
-uv run main.py comstart       # starts vLLM (11112) + LiteLLM proxy with compression (11111)
+# Default DGX/NVIDIA path with Unsloth embeddings
+./install.sh
+./download_embedding_model.sh
+./start.sh proxy
 
-# Option B: standalone (for testing /compress directly)
-cd /home/sna/ai-projects/lunch-model
-python3 qwen3-6-server.py
+# Full chat + RAG stack
+./start.sh both
+```
+
+## Scripts
+
+| Script | Purpose |
+|---|---|
+| `install.sh` | Creates/reuses `./venv`, installs this project, vLLM/FastAPI/Uvicorn runtime dependencies, and the default Torch/Transformers embedding backend for `unsloth/Qwen3-Embedding-4B`. |
+| `download_embedding_model.sh` | Pre-downloads the embedding model into the Hugging Face cache. Defaults to `unsloth/Qwen3-Embedding-4B`; use `--preset mlx-8b` for the MLX model. |
+| `start.sh` | Starts the serving stack. Defaults to the Unsloth/HF embedding backend. Use `proxy` for embeddings/RAG only, `both` for backend + proxy + stats, `backend` for vLLM only, or `stats` for token stats only. |
+| `mlx-start.sh` | Starts the stack with Apple Silicon MLX embeddings: `mlx-community/Qwen3-Embedding-8B-4bit-DWQ` and backend `mlx`. Useful on Mac; not the DGX default. |
+| `kill.sh` | Stops the vLLM backend, LiteLLM proxy, local RAG/embedding endpoints, stats server, and clears ports `11111`, `11112`, and `11113`. |
+| `build.sh` | Builds a distributable bundle/wheel for deployment. |
+
+Common commands:
+
+```bash
+# DGX/NVIDIA embeddings only
+./install.sh
+./download_embedding_model.sh --verify
+./start.sh proxy
+
+# DGX/NVIDIA full chat + RAG
+./start.sh both
+
+# Apple Silicon MLX embeddings
+./install.sh --no-hf-embeddings
+./download_embedding_model.sh --preset mlx-8b --verify
+./mlx-start.sh proxy
+
+# Stop everything
+./kill.sh
 ```
 
 ## Standalone Server Flags
@@ -87,11 +118,11 @@ python3 qwen3-6-server.py \
 
 ## Local RAG
 
-The LiteLLM proxy installs local RAG endpoints on port `11111`. Embeddings are
-generated with MLX and default to:
+The LiteLLM proxy installs local RAG endpoints on port `11111`. Embeddings
+default to the DGX/NVIDIA-friendly Hugging Face backend:
 
 ```
-mlx-community/Qwen3-Embedding-8B-4bit-DWQ
+unsloth/Qwen3-Embedding-4B
 ```
 
 The embedding model is loaded lazily on the first embedding, ingest, search, or
@@ -119,16 +150,23 @@ To also verify the selected local embedding backend can execute the model:
 ./download_embedding_model.sh --verify
 ```
 
-For DGX Spark / NVIDIA, install the Torch/Transformers embedding backend and
-select the Unsloth 4B model:
+For the default DGX Spark / NVIDIA path:
 
 ```bash
-./install.sh --hf-embeddings
-./download_embedding_model.sh --preset unsloth-4b --verify
-QWEN_RAG_EMBED_MODEL=unsloth/Qwen3-Embedding-4B ./start.sh proxy
+./install.sh
+./download_embedding_model.sh --verify
+./start.sh proxy
 ```
 
-You can also select it per request:
+For Apple Silicon / MLX:
+
+```bash
+./install.sh --no-hf-embeddings
+./download_embedding_model.sh --preset mlx-8b --verify
+./mlx-start.sh proxy
+```
+
+You can also select an embedding model per request:
 
 ```json
 {
@@ -136,6 +174,9 @@ You can also select it per request:
   "embedding_backend": "hf"
 }
 ```
+
+When switching embedding models for an existing collection, re-ingest the
+documents. Different embedding models produce different vector dimensions.
 
 By default path ingestion is limited to `./documents` for safety because the
 proxy binds to `0.0.0.0`. Override with:

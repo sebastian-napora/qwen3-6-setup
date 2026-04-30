@@ -18,6 +18,12 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+DEFAULT_RAG_EMBED_MODEL="unsloth/Qwen3-Embedding-4B"
+DEFAULT_RAG_EMBED_BACKEND="hf"
+
+export QWEN_RAG_EMBED_MODEL="${QWEN_RAG_EMBED_MODEL:-$DEFAULT_RAG_EMBED_MODEL}"
+export QWEN_RAG_EMBED_BACKEND="${QWEN_RAG_EMBED_BACKEND:-$DEFAULT_RAG_EMBED_BACKEND}"
+
 # Auto-cleanup any prior run so port-in-use errors don't recur.
 # Skip with: SKIP_CLEAN=1 ./start.sh
 if [[ "${SKIP_CLEAN:-0}" != "1" && -x "$SCRIPT_DIR/kill.sh" ]]; then
@@ -81,8 +87,8 @@ start_stats() {
 
 start_proxy() {
     echo "🚀 Starting LiteLLM proxy (port 11111)..."
-    echo "Embedding model: ${QWEN_RAG_EMBED_MODEL:-mlx-community/Qwen3-Embedding-8B-4bit-DWQ}"
-    echo "Embedding backend: ${QWEN_RAG_EMBED_BACKEND:-auto}"
+    echo "Embedding model: $QWEN_RAG_EMBED_MODEL"
+    echo "Embedding backend: $QWEN_RAG_EMBED_BACKEND"
     if [[ -x "$RUN_PROXY" ]] && [[ ! "$RUN_PROXY" == *.py ]]; then
         $RUN_PROXY &
     else

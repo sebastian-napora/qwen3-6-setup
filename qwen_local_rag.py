@@ -29,7 +29,7 @@ DOCUMENT_ROOT = Path(
 ).resolve()
 
 DEFAULT_EMBED_MODEL = os.environ.get(
-    "QWEN_RAG_EMBED_MODEL", "mlx-community/Qwen3-Embedding-8B-4bit-DWQ"
+    "QWEN_RAG_EMBED_MODEL", "unsloth/Qwen3-Embedding-4B"
 )
 DEFAULT_EMBED_BACKEND = os.environ.get("QWEN_RAG_EMBED_BACKEND", "auto")
 DEFAULT_CHAT_MODEL = os.environ.get("QWEN_RAG_CHAT_MODEL", "qwen3.6-35b-nvfp4")

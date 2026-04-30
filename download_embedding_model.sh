@@ -6,6 +6,7 @@
 #   ./download_embedding_model.sh
 #   ./download_embedding_model.sh --verify
 #   ./download_embedding_model.sh --preset unsloth-4b
+#   ./download_embedding_model.sh --preset mlx-8b
 #   ./download_embedding_model.sh --model mlx-community/Qwen3-Embedding-0.6B
 #   ./download_embedding_model.sh --cache-dir /path/to/hf-cache
 #
@@ -14,7 +15,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-MODEL_ID="${QWEN_RAG_EMBED_MODEL:-mlx-community/Qwen3-Embedding-8B-4bit-DWQ}"
+MODEL_ID="${QWEN_RAG_EMBED_MODEL:-unsloth/Qwen3-Embedding-4B}"
 CACHE_DIR=""
 REVISION=""
 VERIFY=0
@@ -79,7 +80,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
+if [[ "$MODEL_ID" == mlx-community/* ]] && {
+    [[ "$(uname -s)" != "Darwin" ]] || [[ "$(uname -m)" != "arm64" ]]
+}; then
     echo "Warning: MLX embedding runtime needs Apple Silicon macOS with Metal."
     echo "This script can still download the model, but runtime embedding may not work here."
 fi
@@ -138,10 +141,14 @@ To use it:
 To verify the selected local embedding backend can run the model:
   ./download_embedding_model.sh --verify
 
-For DGX/NVIDIA with the Unsloth 4B embedding model:
-  ./install.sh --hf-embeddings
-  ./download_embedding_model.sh --preset unsloth-4b --verify
-  QWEN_RAG_EMBED_MODEL=unsloth/Qwen3-Embedding-4B ./start.sh proxy
+For Apple Silicon with the MLX 8B embedding model:
+  ./download_embedding_model.sh --preset mlx-8b --verify
+  ./mlx-start.sh proxy
+
+For DGX/NVIDIA with the default Unsloth 4B embedding model:
+  ./install.sh
+  ./download_embedding_model.sh --verify
+  ./start.sh proxy
 EOF
     exit 0
 fi
