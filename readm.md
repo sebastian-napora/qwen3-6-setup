@@ -63,10 +63,11 @@ Copilot → LiteLLM (11111) → vLLM qwen3.6 (11112)
 |---|---|
 | `install.sh` | Creates/reuses `./venv`, installs this project, vLLM/FastAPI/Uvicorn runtime dependencies, and the default Torch/Transformers embedding backend for `unsloth/Qwen3-Embedding-4B`. |
 | `download_embedding_model.sh` | Pre-downloads the embedding model into the Hugging Face cache. Defaults to `unsloth/Qwen3-Embedding-4B`; use `--preset mlx-8b` for the MLX model. |
-| `start.sh` | Starts the serving stack. Defaults to the Unsloth/HF embedding backend. Use `proxy` for embeddings/RAG only, `both` for backend + proxy + stats, `backend` for vLLM only, or `stats` for token stats only. |
+| `start.sh` | Starts the serving stack. Defaults to the Unsloth/HF embedding backend. Use `proxy` for embeddings/RAG only, `both` for backend + proxy + stats + ASR, `backend` for vLLM only, `stats` for token stats only, or `asr` for the ASR server only. |
 | `mlx-start.sh` | Starts the stack with Apple Silicon MLX embeddings: `mlx-community/Qwen3-Embedding-8B-4bit-DWQ` and backend `mlx`. Useful on Mac; not the DGX default. |
-| `kill.sh` | Stops the vLLM backend, LiteLLM proxy, local RAG/embedding endpoints, stats server, and clears ports `11111`, `11112`, and `11113`. |
+| `kill.sh` | Stops the vLLM backend, LiteLLM proxy, local RAG/embedding endpoints, stats server, and clears ports `11111`, `11112`, `11113`, and `11114`. |
 | `build.sh` | Builds a distributable bundle/wheel for deployment. |
+| `qwen_asr_server.py` | OpenAI-compatible `/v1/audio/transcriptions` endpoint on port `11114` using `Qwen/Qwen3-ASR-1.7B`. Started by `./start.sh asr` or `./start.sh both`. |
 
 Common commands:
 
@@ -86,6 +87,71 @@ Common commands:
 
 # Stop everything
 ./kill.sh
+```
+
+## Speech-to-Text (ASR)
+
+The stack includes an optional OpenAI-compatible ASR server on port `11114`
+using `Qwen/Qwen3-ASR-1.7B` (52 languages, auto language detection).
+
+### Download the ASR model
+
+```bash
+source venv/bin/activate
+hf download Qwen/Qwen3-ASR-1.7B
+```
+
+### Start ASR only
+
+```bash
+./start.sh asr
+```
+
+### Start everything including ASR
+
+```bash
+./start.sh both   # starts backend + proxy + stats + ASR
+```
+
+### Skip ASR entirely
+
+If you don't need speech-to-text, you can exclude it:
+
+```bash
+# Don't install ASR at setup time
+./install.sh --no-asr
+
+# Or just don't start it — run specific targets instead of 'both'
+./start.sh backend
+./start.sh proxy
+./start.sh stats
+
+# Or set the env var to skip ASR in 'both' mode
+SKIP_ASR=1 ./start.sh both   # (not yet implemented — just use individual targets)
+```
+
+> **Note:** `./start.sh both` always starts ASR. If you want to run the full
+> stack without ASR, start each service individually:
+> ```bash
+> ./start.sh backend && ./start.sh proxy && ./start.sh stats
+> ```
+
+### Transcribe audio
+
+```bash
+# Basic transcription
+curl http://localhost:11114/v1/audio/transcriptions \
+  -F file=@audio.wav \
+  -F model=Qwen/Qwen3-ASR-1.7B
+
+# With explicit language (English, Polish, Chinese, etc.)
+curl http://localhost:11114/v1/audio/transcriptions \
+  -F file=@audio.mp3 \
+  -F language=Polish \
+  -F response_format=verbose_json
+
+# Health check
+curl http://localhost:11114/health
 ```
 
 ## Standalone Server Flags
@@ -115,6 +181,7 @@ python3 qwen3-6-server.py \
 | `/v1/local_rag/ingest` | POST | Ingest local documents into SQLite vector storage |
 | `/v1/local_rag/search` | POST | Search ingested local document chunks |
 | `/v1/local_rag/query` | POST | Retrieve chunks and answer with Qwen via LiteLLM |
+| `/v1/audio/transcriptions` | POST | OpenAI-compatible speech-to-text (port 11114, `Qwen3-ASR-1.7B`) |
 
 ## Local RAG
 
