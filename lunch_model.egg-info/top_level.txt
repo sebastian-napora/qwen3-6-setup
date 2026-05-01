@@ -1,6 +1,8 @@
 qwen36_compress
 qwen3_6_server
+qwen_asr_server
 qwen_compress
+qwen_local_rag
 qwen_token_stats_server
 qwen_token_tracker
 request_logging

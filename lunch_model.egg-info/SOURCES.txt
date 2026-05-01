@@ -1,7 +1,9 @@
 pyproject.toml
 qwen36_compress.py
 qwen3_6_server.py
+qwen_asr_server.py
 qwen_compress.py
+qwen_local_rag.py
 qwen_token_stats_server.py
 qwen_token_tracker.py
 readm.md

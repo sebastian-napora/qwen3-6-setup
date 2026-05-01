@@ -27,6 +27,27 @@ model_list:
     model_info:
       supports_vision: true
 
+  - model_name: qwen36-think
+    litellm_params:
+      model: openai/RedHatAI/Qwen3.6-35B-A3B-NVFP4
+      api_base: http://localhost:11112/v1
+      api_key: none
+      max_tokens: 60000
+      temperature: 0.7
+      extra_body:
+        chat_template_kwargs:
+          enable_thinking: true
+    model_info:
+      supports_vision: true
+
+  - model_name: qwen3-asr
+    litellm_params:
+      model: openai/Qwen/Qwen3-ASR-1.7B
+      api_base: http://localhost:11114/v1
+      api_key: none
+    model_info:
+      mode: audio_transcription
+
 litellm_settings:
   drop_params: true
   request_timeout: 300

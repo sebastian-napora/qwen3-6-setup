@@ -33,11 +33,15 @@ hf-embeddings = [
     "torch>=2.6",
     "transformers>=4.51",
 ]
+asr = [
+    "torch>=2.6",
+]
 
 [project.scripts]
 qwen-server = "qwen3_6_server:run"
 qwen-compress = "server_compress:main"
 qwen-stats = "qwen_token_stats_server:main"
+qwen-asr = "qwen_asr_server:main"
 
 [tool.setuptools]
 package-data = { "*" = ["*.yaml", "*.yml", "*.sh", "*.md"] }
@@ -49,6 +53,7 @@ py-modules = [
     "qwen_compress",
     "qwen36_compress",
     "qwen_local_rag",
+    "qwen_asr_server",
     "request_logging",
 ]
 

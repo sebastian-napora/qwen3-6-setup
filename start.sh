@@ -45,10 +45,14 @@ RUN_SERVER="$($VENV_PYTHON -c "import shutil; print(shutil.which('qwen-server') 
 RUN_PROXY="$($VENV_PYTHON -c "import shutil; print(shutil.which('qwen-compress') or '')" 2>/dev/null)"
 RUN_STATS="$($VENV_PYTHON -c "import shutil; print(shutil.which('qwen-stats') or '')" 2>/dev/null)"
 
+RUN_ASR="$($VENV_PYTHON -c "import shutil; print(shutil.which('qwen-asr') or '')" 2>/dev/null)"
+
 # Fall back to relative paths (development mode)
 RUN_SERVER="${RUN_SERVER:-$SCRIPT_DIR/qwen3_6_server.py}"
 RUN_PROXY="${RUN_PROXY:-$SCRIPT_DIR/server_compress.py}"
 RUN_STATS="${RUN_STATS:-$SCRIPT_DIR/qwen_token_stats_server.py}"
+
+RUN_ASR="${RUN_ASR:-$SCRIPT_DIR/qwen_asr_server.py}"
 
 mkdir -p logs
 
@@ -98,6 +102,16 @@ start_proxy() {
     echo "Local RAG / embeddings: http://0.0.0.0:${LITE_LLM_PROXY_PORT:-11111}/v1/local_rag/health"
 }
 
+start_asr() {
+    echo "🎙️  Starting Qwen3-ASR server (port 11114)..."
+    if [[ -x "$RUN_ASR" ]] && [[ ! "$RUN_ASR" == *.py ]]; then
+        $RUN_ASR --preload &
+    else
+        $VENV_PYTHON "$RUN_ASR" --preload &
+    fi
+    echo "ASR PID: $!"
+}
+
 case "${1:-both}" in
     both)
         start_backend
@@ -107,17 +121,20 @@ case "${1:-both}" in
         start_stats
         sleep 1
         start_proxy
+        start_asr
         echo ""
         echo "✅ All services started:"
         echo "   vLLM backend:   http://0.0.0.0:11112"
         echo "   LiteLLM proxy:  http://0.0.0.0:11111"
         echo "   Local RAG:      http://0.0.0.0:11111/v1/local_rag/health"
         echo "   Token stats:    http://0.0.0.0:11113"
+        echo "   ASR server:     http://0.0.0.0:11114"
         echo ""
         echo "Test with:"
         echo "  curl http://localhost:11112/health"
         echo "  curl http://localhost:11111/health"
         echo "  curl http://localhost:11111/v1/local_rag/health"
+        echo "  curl http://localhost:11114/health"
         ;;
     backend)
         start_backend
@@ -129,8 +146,11 @@ case "${1:-both}" in
     stats)
         start_stats
         ;;
+    asr)
+        start_asr
+        ;;
     *)
-        echo "Usage: $0 [both|backend|proxy|stats]"
+        echo "Usage: $0 [both|backend|proxy|stats|asr]"
         exit 1
         ;;
 esac

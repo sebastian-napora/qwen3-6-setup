@@ -11,9 +11,10 @@
 #   5. Prints next-step commands.
 #
 # Usage:
-#   ./install.sh                 # default: full install (runtime + HF embeddings)
+#   ./install.sh                 # default: full install (runtime + HF embeddings + ASR)
 #   ./install.sh --no-runtime    # skip vllm/fastapi/uvicorn (proxy-only host)
 #   ./install.sh --no-hf-embeddings  # skip Torch/Transformers embedding backend
+#   ./install.sh --no-asr        # skip Qwen3-ASR speech-to-text
 #   ./install.sh --dev           # also install dev extras (build, pyinstaller)
 #   ./install.sh --recreate      # delete and rebuild ./venv from scratch
 #   ./install.sh --python python3.12  # pin a specific interpreter
@@ -28,6 +29,7 @@ PYTHON_BIN=""
 INSTALL_RUNTIME=1
 INSTALL_DEV=0
 INSTALL_HF_EMBEDDINGS=1
+INSTALL_ASR=1
 RECREATE=0
 
 # ── Argument parsing ──────────────────────────────────────────────────────────
@@ -38,6 +40,8 @@ while [[ $# -gt 0 ]]; do
                        INSTALL_HF_EMBEDDINGS=1; shift ;;
         --no-hf-embeddings)
                        INSTALL_HF_EMBEDDINGS=0; shift ;;
+        --asr)         INSTALL_ASR=1;     shift ;;
+        --no-asr)      INSTALL_ASR=0;     shift ;;
         --dev)         INSTALL_DEV=1;     shift ;;
         --recreate)    RECREATE=1;        shift ;;
         --python)      PYTHON_BIN="$2";   shift 2 ;;
@@ -102,6 +106,7 @@ EXTRAS=()
 [[ "$INSTALL_RUNTIME" -eq 1 ]] && EXTRAS+=("runtime")
 [[ "$INSTALL_DEV"     -eq 1 ]] && EXTRAS+=("dev")
 [[ "$INSTALL_HF_EMBEDDINGS" -eq 1 ]] && EXTRAS+=("hf-embeddings")
+[[ "$INSTALL_ASR"     -eq 1 ]] && EXTRAS+=("asr")
 
 if [[ "${#EXTRAS[@]}" -gt 0 ]]; then
     EXTRA_SPEC="[$(IFS=,; echo "${EXTRAS[*]}")]"
@@ -112,9 +117,17 @@ fi
 echo "📥 Installing project (editable) with extras: ${EXTRAS[*]:-none}"
 python -m pip install -e ".${EXTRA_SPEC}"
 
+# ── qwen-asr: installed separately to avoid transformers version conflict ─────
+# qwen-asr pins transformers==4.57.6, but mlx-embeddings requires >=5.0.0.
+# --no-deps skips the pin; all actual runtime deps are already satisfied.
+if [[ "$INSTALL_ASR" -eq 1 ]]; then
+    echo "📥 Installing qwen-asr (--no-deps to avoid transformers pin conflict)"
+    python -m pip install --no-deps qwen-asr
+fi
+
 # ── Sanity check ──────────────────────────────────────────────────────────────
 echo "🔎 Verifying installed console scripts"
-for cmd in qwen-server qwen-compress qwen-stats; do
+for cmd in qwen-server qwen-compress qwen-stats qwen-asr; do
     if command -v "$cmd" >/dev/null 2>&1; then
         echo "   ✅ $cmd  ->  $(command -v "$cmd")"
     else
@@ -123,7 +136,7 @@ for cmd in qwen-server qwen-compress qwen-stats; do
 done
 
 echo "🔎 Verifying module imports"
-CHECK_HF_EMBEDDINGS="$INSTALL_HF_EMBEDDINGS" python - <<'PY'
+CHECK_HF_EMBEDDINGS="$INSTALL_HF_EMBEDDINGS" CHECK_ASR="$INSTALL_ASR" python - <<'PY'
 import importlib
 import importlib.util
 import os
@@ -141,6 +154,8 @@ import_mods = [
 installed_mods = ["mlx_embeddings"]
 if os.environ.get("CHECK_HF_EMBEDDINGS") == "1":
     installed_mods.extend(["torch", "transformers", "accelerate"])
+if os.environ.get("CHECK_ASR") == "1":
+    installed_mods.extend(["qwen_asr"])
 
 failed = []
 for m in import_mods:
@@ -175,6 +190,8 @@ Health checks:
   curl http://localhost:11112/health   # vLLM backend
   curl http://localhost:11111/health   # LiteLLM proxy
   curl http://localhost:11111/v1/local_rag/health   # local RAG / embeddings
+
+  curl http://localhost:11114/health               # ASR server
 
 Local RAG:
   The default embedding model is unsloth/Qwen3-Embedding-4B.
