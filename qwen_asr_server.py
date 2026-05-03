@@ -17,17 +17,24 @@ Supported audio formats: wav, mp3, ogg, flac, m4a, webm
 """
 
 import argparse
+import io
 import logging
 import os
 import sys
-import tempfile
 import time
 from pathlib import Path
 
+import numpy as np
+import soundfile as sf
 import torch
 import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
+
+try:
+    import av
+except ImportError:
+    av = None
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 LOG_DIR = Path(__file__).parent / "logs"
@@ -49,6 +56,77 @@ DEFAULT_HOST = os.environ.get("QWEN_ASR_HOST", "0.0.0.0")
 DEFAULT_LANGUAGE = os.environ.get("QWEN_ASR_LANGUAGE", None)  # None = auto-detect
 
 _model = None  # lazy-loaded Qwen3ASRModel
+
+
+def _pcm_to_float32(audio: np.ndarray) -> np.ndarray:
+    """Normalize decoded PCM data into float32 in the [-1, 1] range."""
+    audio = np.asarray(audio)
+    if np.issubdtype(audio.dtype, np.floating):
+        return audio.astype(np.float32)
+    if np.issubdtype(audio.dtype, np.signedinteger):
+        info = np.iinfo(audio.dtype)
+        peak = float(max(abs(info.min), info.max))
+        return np.clip(audio.astype(np.float32) / peak, -1.0, 1.0)
+    if np.issubdtype(audio.dtype, np.unsignedinteger):
+        info = np.iinfo(audio.dtype)
+        midpoint = (info.max + 1) / 2.0
+        return np.clip((audio.astype(np.float32) - midpoint) / midpoint, -1.0, 1.0)
+    raise TypeError(f"Unsupported decoded audio dtype: {audio.dtype}")
+
+
+def _decode_audio_with_soundfile(audio_bytes: bytes) -> tuple[np.ndarray, int]:
+    with io.BytesIO(audio_bytes) as buffer:
+        audio, sample_rate = sf.read(buffer, dtype="float32", always_2d=False)
+    return np.asarray(audio, dtype=np.float32), int(sample_rate)
+
+
+def _decode_audio_with_av(audio_bytes: bytes) -> tuple[np.ndarray, int]:
+    if av is None:
+        raise RuntimeError("PyAV is not installed")
+
+    with av.open(io.BytesIO(audio_bytes), mode="r") as container:
+        stream = next((candidate for candidate in container.streams if candidate.type == "audio"), None)
+        if stream is None:
+            raise ValueError("No audio stream found in upload")
+
+        chunks: list[np.ndarray] = []
+        sample_rate: int | None = None
+        for frame in container.decode(stream):
+            sample_rate = int(
+                frame.sample_rate
+                or getattr(stream.codec_context, "sample_rate", 0)
+                or getattr(stream, "rate", 0)
+            )
+            chunk = np.asarray(frame.to_ndarray())
+            if chunk.size == 0:
+                continue
+            chunks.append(chunk)
+
+    if not chunks or not sample_rate:
+        raise ValueError("Decoded audio contained no PCM frames")
+
+    concat_axis = 0 if chunks[0].ndim == 1 else 1
+    audio = np.concatenate(chunks, axis=concat_axis)
+    return _pcm_to_float32(audio), sample_rate
+
+
+def _decode_audio_bytes(audio_bytes: bytes, filename: str) -> tuple[np.ndarray, int]:
+    try:
+        return _decode_audio_with_soundfile(audio_bytes)
+    except Exception as soundfile_error:
+        if av is None:
+            raise RuntimeError(
+                f"Unsupported or unreadable audio format for {filename!r}; install PyAV for WebM/Opus uploads."
+            ) from soundfile_error
+
+        try:
+            audio, sample_rate = _decode_audio_with_av(audio_bytes)
+            logger.info("Decoded %s with PyAV fallback at %d Hz", filename, sample_rate)
+            return audio, sample_rate
+        except Exception as av_error:
+            raise RuntimeError(
+                f"Unsupported or unreadable audio format for {filename!r}."
+            ) from av_error
 
 
 def _load_model(model_id: str):
@@ -77,29 +155,21 @@ def _load_model(model_id: str):
 def _transcribe(audio_bytes: bytes, filename: str, language: str | None) -> dict:
     """Run ASR on raw audio bytes. Returns dict with text and metadata."""
     model = _load_model(DEFAULT_MODEL)
+    audio, sample_rate = _decode_audio_bytes(audio_bytes, filename)
 
-    suffix = Path(filename).suffix or ".wav"
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        tmp.write(audio_bytes)
-        tmp_path = tmp.name
+    t0 = time.time()
+    results = model.transcribe(audio=(audio, sample_rate), language=language)
+    elapsed = time.time() - t0
 
-    try:
-        t0 = time.time()
-        results = model.transcribe(audio=tmp_path, language=language)
-        elapsed = time.time() - t0
+    result = results[0]
+    text = result.text.strip()
+    detected_language = result.language or "unknown"
 
-        result = results[0]
-        text = result.text.strip()
-        detected_language = result.language or "unknown"
-
-        logger.info(
-            "Transcribed %s → %d chars in %.2fs  (lang=%s)",
-            filename, len(text), elapsed, detected_language,
-        )
-        return {"text": text, "language": detected_language, "elapsed": elapsed}
-
-    finally:
-        os.unlink(tmp_path)
+    logger.info(
+        "Transcribed %s → %d chars in %.2fs  (lang=%s)",
+        filename, len(text), elapsed, detected_language,
+    )
+    return {"text": text, "language": detected_language, "elapsed": elapsed}
 
 
 # ── FastAPI app ────────────────────────────────────────────────────────────────

@@ -97,14 +97,30 @@ using `Qwen/Qwen3-ASR-1.7B` (52 languages, auto language detection).
 ### Download the ASR model
 
 ```bash
-source venv/bin/activate
+source asr_venv/bin/activate
 hf download Qwen/Qwen3-ASR-1.7B
 ```
+
+ASR uses `./asr_venv` so `qwen-asr` can keep its required
+`transformers==4.57.6` while the main serving stack keeps the newer
+Transformers version required by embeddings and vLLM.
+
+`install.sh` also installs PyAV for the ASR runtime so browser-recorded
+`audio/webm` uploads can be decoded without relying on a system `ffmpeg`
+binary.
 
 ### Start ASR only
 
 ```bash
 ./start.sh asr
+```
+
+By default the ASR model loads lazily on the first transcription request so the
+HTTP endpoint is available immediately. To preload the model before the server
+starts listening, run:
+
+```bash
+QWEN_ASR_PRELOAD=1 ./start.sh asr
 ```
 
 ### Start everything including ASR
@@ -149,6 +165,10 @@ curl http://localhost:11114/v1/audio/transcriptions \
   -F file=@audio.mp3 \
   -F language=Polish \
   -F response_format=verbose_json
+
+# Browser recordings uploaded as audio/webm are supported too.
+curl http://localhost:11114/v1/audio/transcriptions \
+  -F file=@recording.webm
 
 # Health check
 curl http://localhost:11114/health

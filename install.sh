@@ -5,6 +5,7 @@
 # What it does:
 #   1. Verifies a usable Python interpreter (>= 3.12).
 #   2. Creates ./venv if missing.
+#   2a. Creates ./asr_venv for Qwen3-ASR when ASR is enabled.
 #   3. Upgrades pip / setuptools / wheel inside the venv.
 #   4. Installs this project editable, with local RAG dependencies and optional
 #      [runtime] extras (vllm, fastapi, uvicorn).
@@ -81,10 +82,16 @@ fi
 
 # ── Venv ──────────────────────────────────────────────────────────────────────
 VENV_DIR="$SCRIPT_DIR/venv"
+ASR_VENV_DIR="$SCRIPT_DIR/asr_venv"
 
 if [[ "$RECREATE" -eq 1 && -d "$VENV_DIR" ]]; then
     echo "🧹 Removing existing venv at $VENV_DIR"
     rm -rf "$VENV_DIR"
+fi
+
+if [[ "$RECREATE" -eq 1 && -d "$ASR_VENV_DIR" ]]; then
+    echo "🧹 Removing existing ASR venv at $ASR_VENV_DIR"
+    rm -rf "$ASR_VENV_DIR"
 fi
 
 if [[ ! -d "$VENV_DIR" ]]; then
@@ -106,7 +113,6 @@ EXTRAS=()
 [[ "$INSTALL_RUNTIME" -eq 1 ]] && EXTRAS+=("runtime")
 [[ "$INSTALL_DEV"     -eq 1 ]] && EXTRAS+=("dev")
 [[ "$INSTALL_HF_EMBEDDINGS" -eq 1 ]] && EXTRAS+=("hf-embeddings")
-[[ "$INSTALL_ASR"     -eq 1 ]] && EXTRAS+=("asr")
 
 if [[ "${#EXTRAS[@]}" -gt 0 ]]; then
     EXTRA_SPEC="[$(IFS=,; echo "${EXTRAS[*]}")]"
@@ -117,17 +123,43 @@ fi
 echo "📥 Installing project (editable) with extras: ${EXTRAS[*]:-none}"
 python -m pip install -e ".${EXTRA_SPEC}"
 
-# ── qwen-asr: installed separately to avoid transformers version conflict ─────
+# ── qwen-asr: isolated to avoid transformers version conflict ─────────────────
 # qwen-asr pins transformers==4.57.6, but mlx-embeddings requires >=5.0.0.
-# --no-deps skips the pin; all actual runtime deps are already satisfied.
+# The ASR venv gets the pinned ASR stack and sees the main venv for heavyweight
+# packages such as torch via a .pth file.
 if [[ "$INSTALL_ASR" -eq 1 ]]; then
-    echo "📥 Installing qwen-asr (--no-deps to avoid transformers pin conflict)"
-    python -m pip install --no-deps qwen-asr
+    echo "📦 Creating/reusing ASR venv at $ASR_VENV_DIR"
+    if [[ ! -d "$ASR_VENV_DIR" ]]; then
+        "$PYTHON_BIN" -m venv "$ASR_VENV_DIR"
+    fi
+
+    MAIN_SITE_PACKAGES="$(python - <<'PY'
+import sysconfig
+print(sysconfig.get_paths()["purelib"])
+PY
+)"
+    ASR_SITE_PACKAGES="$("$ASR_VENV_DIR/bin/python" - <<'PY'
+import sysconfig
+print(sysconfig.get_paths()["purelib"])
+PY
+)"
+    echo "$MAIN_SITE_PACKAGES" > "$ASR_SITE_PACKAGES/lunch_model_main_venv.pth"
+
+    echo "⬆️  Upgrading ASR pip / setuptools / wheel"
+    "$ASR_VENV_DIR/bin/python" -m pip install --upgrade pip setuptools wheel
+
+    echo "📥 Installing isolated qwen-asr runtime"
+    "$ASR_VENV_DIR/bin/python" -m pip install \
+        "qwen-asr" \
+        "av>=12" \
+        "fastapi>=0.115" \
+        "uvicorn[standard]>=0.34" \
+        "python-multipart>=0.0.9"
 fi
 
 # ── Sanity check ──────────────────────────────────────────────────────────────
 echo "🔎 Verifying installed console scripts"
-for cmd in qwen-server qwen-compress qwen-stats qwen-asr; do
+for cmd in qwen-server qwen-compress qwen-stats; do
     if command -v "$cmd" >/dev/null 2>&1; then
         echo "   ✅ $cmd  ->  $(command -v "$cmd")"
     else
@@ -154,8 +186,6 @@ import_mods = [
 installed_mods = ["mlx_embeddings"]
 if os.environ.get("CHECK_HF_EMBEDDINGS") == "1":
     installed_mods.extend(["torch", "transformers", "accelerate"])
-if os.environ.get("CHECK_ASR") == "1":
-    installed_mods.extend(["qwen_asr"])
 
 failed = []
 for m in import_mods:
@@ -175,6 +205,27 @@ for m in installed_mods:
 
 sys.exit(1 if failed else 0)
 PY
+
+if [[ "$INSTALL_ASR" -eq 1 ]]; then
+    echo "🔎 Verifying ASR venv imports"
+    "$ASR_VENV_DIR/bin/python" - <<'PY'
+import importlib
+import sys
+
+mods = ["qwen_asr", "transformers", "torch", "fastapi", "uvicorn"]
+failed = []
+for mod in mods:
+    try:
+        imported = importlib.import_module(mod)
+        version = getattr(imported, "__version__", "installed")
+        print(f"   ✅ {mod} {version}")
+    except Exception as exc:
+        failed.append((mod, exc))
+        print(f"   ❌ {mod}: {exc}")
+
+sys.exit(1 if failed else 0)
+PY
+fi
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 cat <<EOF

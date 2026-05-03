@@ -39,20 +39,24 @@ else
     VENV_PYTHON="python3"
 fi
 
+if [ -x "asr_venv/bin/python3" ]; then
+    ASR_PYTHON="asr_venv/bin/python3"
+else
+    ASR_PYTHON="$VENV_PYTHON"
+fi
+
 # Entry point commands (available when package is installed via pip/wheel)
 # Falls back to relative paths for development (running from source dir)
 RUN_SERVER="$($VENV_PYTHON -c "import shutil; print(shutil.which('qwen-server') or '')" 2>/dev/null)"
 RUN_PROXY="$($VENV_PYTHON -c "import shutil; print(shutil.which('qwen-compress') or '')" 2>/dev/null)"
 RUN_STATS="$($VENV_PYTHON -c "import shutil; print(shutil.which('qwen-stats') or '')" 2>/dev/null)"
 
-RUN_ASR="$($VENV_PYTHON -c "import shutil; print(shutil.which('qwen-asr') or '')" 2>/dev/null)"
-
 # Fall back to relative paths (development mode)
 RUN_SERVER="${RUN_SERVER:-$SCRIPT_DIR/qwen3_6_server.py}"
 RUN_PROXY="${RUN_PROXY:-$SCRIPT_DIR/server_compress.py}"
 RUN_STATS="${RUN_STATS:-$SCRIPT_DIR/qwen_token_stats_server.py}"
 
-RUN_ASR="${RUN_ASR:-$SCRIPT_DIR/qwen_asr_server.py}"
+RUN_ASR="$SCRIPT_DIR/qwen_asr_server.py"
 
 mkdir -p logs
 
@@ -103,12 +107,13 @@ start_proxy() {
 }
 
 start_asr() {
-    echo "🎙️  Starting Qwen3-ASR server (port 11114)..."
-    if [[ -x "$RUN_ASR" ]] && [[ ! "$RUN_ASR" == *.py ]]; then
-        $RUN_ASR --preload &
-    else
-        $VENV_PYTHON "$RUN_ASR" --preload &
+    local asr_args=()
+    if [[ "${QWEN_ASR_PRELOAD:-0}" == "1" ]]; then
+        asr_args+=(--preload)
     fi
+    echo "🎙️  Starting Qwen3-ASR server (port 11114)..."
+    echo "ASR Python: $ASR_PYTHON"
+    $ASR_PYTHON "$RUN_ASR" "${asr_args[@]}" &
     echo "ASR PID: $!"
 }
 

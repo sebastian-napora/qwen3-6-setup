@@ -1,4 +1,5 @@
 venv
+asr_venv
 git.backup
 .qwen
 dist
