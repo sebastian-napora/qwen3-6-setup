@@ -1,0 +1,50 @@
+# LiteLLM Proxy Configuration for GadflyII/GLM-4.7-Flash-NVFP4 via Atlas spark
+#
+# Architecture:
+#   Copilot / VS Code → LiteLLM (11111) → Atlas spark (9999)
+#
+# Start everything: cd /home/sna/ai-projects/atlas && ./start-glm.sh
+
+model_list:
+  - model_name: glm-4.7-flash-nvfp4
+    litellm_params:
+      model: openai/GadflyII/GLM-4.7-Flash-NVFP4
+      api_base: http://localhost:9999/v1
+      api_key: none
+      max_tokens: 60000
+      temperature: 0.7
+    model_info:
+      supports_vision: false
+      supports_function_calling: false
+      supports_reasoning: true
+      input_cost_per_token: 0
+      output_cost_per_token: 0
+
+  - model_name: glm47flash
+    litellm_params:
+      model: openai/GadflyII/GLM-4.7-Flash-NVFP4
+      api_base: http://localhost:9999/v1
+      api_key: none
+      max_tokens: 60000
+      temperature: 0.7
+    model_info:
+      supports_vision: false
+      supports_function_calling: false
+      supports_reasoning: true
+      input_cost_per_token: 0
+      output_cost_per_token: 0
+
+litellm_settings:
+  drop_params: true
+  request_timeout: 300
+  set_verbose: false
+  system_prompt: |
+    You are a helpful, concise coding assistant.
+    Match response length to the request: trivial questions get trivial answers.
+    Do not repeat reasoning or restart from scratch.
+    Do not emit Error:/Exception:/Warning: labels unless there is a genuine error.
+    Stop as soon as the task is done.
+
+general_settings:
+  completion_model: "glm-4.7-flash-nvfp4"
+  disable_auth: true          # no master key required; open access
