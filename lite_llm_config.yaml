@@ -1,44 +1,66 @@
-# LiteLLM Proxy Configuration for Qwen3.6-35B-A3B-NVFP4
+# LiteLLM Proxy Configuration for Qwen3.6/3.5-35B via Atlas spark
 #
 # Architecture:
-#   Copilot → LiteLLM (11111) → vLLM (11112)
+#   Copilot / VS Code → LiteLLM (11111) → Atlas spark (9999)
 #
-# Start vLLM backend (11112):  python3 qwen3_6_server.py
-# Start LiteLLM proxy (11111): python3 server_compress.py
+# Start everything: cd /home/sna/ai-projects/atlas && ./start.sh
+# Start proxy only: cd /home/sna/ai-projects/lunch-model && ./start.sh proxy
 
 model_list:
   - model_name: qwen3.6-35b-nvfp4
     litellm_params:
       model: openai/RedHatAI/Qwen3.6-35B-A3B-NVFP4
-      api_base: http://localhost:11112/v1
+      api_base: http://localhost:9999/v1
       api_key: none
       max_tokens: 60000
       temperature: 0.7
     model_info:
       supports_vision: true
+      supports_function_calling: false  # tool schemas can overflow 32k context in Copilot
+      input_cost_per_token: 0
+      output_cost_per_token: 0
 
   - model_name: qwen36flash
     litellm_params:
       model: openai/RedHatAI/Qwen3.6-35B-A3B-NVFP4
-      api_base: http://localhost:11112/v1
+      api_base: http://localhost:9999/v1
       api_key: none
       max_tokens: 60000
       temperature: 0.7
     model_info:
       supports_vision: true
+      supports_function_calling: false
+      input_cost_per_token: 0
+      output_cost_per_token: 0
 
   - model_name: qwen36-think
     litellm_params:
       model: openai/RedHatAI/Qwen3.6-35B-A3B-NVFP4
-      api_base: http://localhost:11112/v1
+      api_base: http://localhost:9999/v1
       api_key: none
       max_tokens: 60000
       temperature: 0.7
       extra_body:
-        chat_template_kwargs:
-          enable_thinking: true
+        enable_thinking: true
     model_info:
       supports_vision: true
+      supports_function_calling: false
+      supports_reasoning: true
+      input_cost_per_token: 0
+      output_cost_per_token: 0
+
+  - model_name: qwen3.5-35b-nvfp4
+    litellm_params:
+      model: openai/Sehyo/Qwen3.5-35B-A3B-NVFP4
+      api_base: http://localhost:9999/v1
+      api_key: none
+      max_tokens: 60000
+      temperature: 0.7
+    model_info:
+      supports_vision: false
+      supports_function_calling: false
+      input_cost_per_token: 0
+      output_cost_per_token: 0
 
   - model_name: qwen3-asr
     litellm_params:
