@@ -127,7 +127,8 @@ async def main():
         "--max-num-seqs", "1",                 # single user/session — no concurrency needed
         "--max-num-batched-tokens", "32768",   # large chunks = faster prefill for long Copilot contexts
         "--moe-backend", "cutlass",
-        "--enable-chunked-prefill",            # better throughput for long prompts (replaces --enforce-eager)
+        "--enforce-eager",                     # disables inductor — required on GB10 to avoid torch.compile crash
+        "--enable-chunked-prefill",            # better throughput for long prompts
         "--disable-log-stats",
         "--enable-prefix-caching",
         "--tool-call-parser", "qwen3_xml",
