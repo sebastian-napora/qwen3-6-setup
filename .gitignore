@@ -1,8 +1,11 @@
 venv
+asr_venv
 git.backup
 .qwen
 dist
 qwen_server.egg-info
 .xtread
 __pycache__
-/logs
+logs
+rag_data
+documents
